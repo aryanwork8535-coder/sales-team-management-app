@@ -110,13 +110,13 @@ class TestCatalog:
     def test_products(self, sp_token):
         r = requests.get(f"{BASE_URL}/api/products", headers=_h(sp_token), timeout=TIMEOUT)
         assert r.status_code == 200
-        assert len(r.json()) == 14
+        assert len(r.json()) >= 14
 
     def test_brands(self, sp_token):
         r = requests.get(f"{BASE_URL}/api/brands", headers=_h(sp_token), timeout=TIMEOUT)
         assert r.status_code == 200
         brands = set(r.json())
-        assert brands == {"DHAMAL", "FOAMATIC", "PRISTYN", "SCRUB & SHINE"}
+        assert {"DHAMAL", "FOAMATIC", "PRISTYN", "SCRUB & SHINE"}.issubset(brands)
 
 
 # ---------- Schemes ----------

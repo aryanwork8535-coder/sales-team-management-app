@@ -143,6 +143,7 @@ class OrderCreate(BaseModel):
     retailer_id: str
     items: List[OrderItemIn]
     remarks: Optional[str] = ""
+    client_id: Optional[str] = None  # for offline sync idempotency
 
 
 class VisitStartRequest(BaseModel):
@@ -150,6 +151,8 @@ class VisitStartRequest(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     gps_accuracy: Optional[float] = None
+    client_id: Optional[str] = None  # for offline sync idempotency
+    client_time: Optional[str] = None  # ISO timestamp captured offline
 
 
 class VisitCompleteRequest(BaseModel):
@@ -159,6 +162,7 @@ class VisitCompleteRequest(BaseModel):
     result: str  # ORDER_BOOKED | NO_ORDER | PAYMENT_COLLECTED | COMPLAINT | NEW_RETAILER | OTHER
     no_order_reason: Optional[str] = None
     remarks: Optional[str] = ""
+    client_time: Optional[str] = None  # ISO timestamp captured offline
 
 
 class CollectionCreate(BaseModel):
@@ -355,13 +359,23 @@ async def start_visit(req: VisitStartRequest, user=Depends(get_current_user)):
     retailer = await db.retailers.find_one({"id": req.retailer_id}, {"_id": 0})
     if not retailer:
         raise HTTPException(404, "Retailer not found")
-    vid = str(uuid.uuid4())
+    if req.client_id:
+        existing = await db.visits.find_one({"id": req.client_id}, {"_id": 0})
+        if existing:
+            return existing
+    vid = req.client_id or str(uuid.uuid4())
+    start_time = now_utc()
+    if req.client_time:
+        try:
+            start_time = datetime.fromisoformat(req.client_time.replace("Z", "+00:00"))
+        except ValueError:
+            pass
     doc = {
         "id": vid,
         "retailer_id": req.retailer_id,
         "retailer_name": retailer.get("shop_name"),
         "salesperson_id": user["id"],
-        "start_time": now_utc(),
+        "start_time": start_time,
         "start_lat": req.latitude,
         "start_lng": req.longitude,
         "gps_accuracy": req.gps_accuracy,
@@ -383,6 +397,11 @@ async def complete_visit(req: VisitCompleteRequest, user=Depends(get_current_use
     if req.result == "NO_ORDER" and not req.no_order_reason:
         raise HTTPException(400, "No-order reason required")
     end = now_utc()
+    if req.client_time:
+        try:
+            end = datetime.fromisoformat(req.client_time.replace("Z", "+00:00"))
+        except ValueError:
+            pass
     duration = (end - v["start_time"].replace(tzinfo=timezone.utc)).total_seconds() // 60 if v.get("start_time") else 0
     await db.visits.update_one(
         {"id": req.visit_id},
@@ -446,6 +465,10 @@ async def scheme_calc(payload: dict, user=Depends(get_current_user)):
 async def create_order(req: OrderCreate, user=Depends(get_current_user)):
     if not req.items:
         raise HTTPException(400, "Order must have at least one item")
+    if req.client_id:
+        existing = await db.orders.find_one({"client_id": req.client_id}, {"_id": 0})
+        if existing:
+            return existing
     retailer = await db.retailers.find_one({"id": req.retailer_id}, {"_id": 0})
     if not retailer:
         raise HTTPException(404, "Retailer not found")
@@ -488,6 +511,7 @@ async def create_order(req: OrderCreate, user=Depends(get_current_user)):
     doc = {
         "id": oid,
         "order_no": order_no,
+        "client_id": req.client_id,
         "retailer_id": req.retailer_id,
         "retailer_name": retailer.get("shop_name"),
         "salesperson_id": user["id"],
@@ -804,6 +828,429 @@ async def seed_data():
     })
 
     return {"ok": True, "users": len(users), "products": len(products), "retailers": 50}
+
+
+# ---------- Attendance / Expenses / Complaints / Admin ----------
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def ist_date_str() -> str:
+    return datetime.now(IST).strftime("%Y-%m-%d")
+
+
+def require_admin(user: dict):
+    if user["role"] not in ("super_admin", "sales_manager"):
+        raise HTTPException(403, "Admin access required")
+
+
+def _aware_dt(dt):
+    if dt and dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+class GpsPunch(BaseModel):
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class ExpenseCreate(BaseModel):
+    category: str  # Travel | Fuel | Food | Lodging | Other
+    amount: float
+    expense_date: Optional[str] = None  # YYYY-MM-DD
+    remarks: Optional[str] = ""
+    bill_photo: Optional[str] = None
+
+
+class ComplaintCreate(BaseModel):
+    retailer_id: str
+    category: str
+    description: str
+    photo_path: Optional[str] = None
+
+
+class ReviewRequest(BaseModel):
+    status: str
+    comment: Optional[str] = ""
+
+
+class ProductCreate(BaseModel):
+    brand: str
+    name: str
+    category: Optional[str] = ""
+    pack_size: Optional[str] = ""
+    sku_code: str
+    mrp: float
+    distributor_rate: float = 0
+    retailer_rate: float = 0
+    salesperson_rate: float = 0
+    gst: float = 18
+    active: bool = True
+
+
+class ProductUpdate(BaseModel):
+    brand: Optional[str] = None
+    name: Optional[str] = None
+    category: Optional[str] = None
+    pack_size: Optional[str] = None
+    sku_code: Optional[str] = None
+    mrp: Optional[float] = None
+    distributor_rate: Optional[float] = None
+    retailer_rate: Optional[float] = None
+    salesperson_rate: Optional[float] = None
+    gst: Optional[float] = None
+    active: Optional[bool] = None
+
+
+class UserCreate(BaseModel):
+    employee_id: str
+    name: str
+    role: str  # super_admin | sales_manager | salesperson | distributor
+    mobile: Optional[str] = ""
+    territory: Optional[str] = ""
+    password: str
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    mobile: Optional[str] = None
+    territory: Optional[str] = None
+    password: Optional[str] = None
+    active: Optional[bool] = None
+
+
+# ----- Attendance -----
+@api_router.get("/attendance/today")
+async def attendance_today(user=Depends(get_current_user)):
+    doc = await db.attendance.find_one({"salesperson_id": user["id"], "date": ist_date_str()}, {"_id": 0})
+    return doc
+
+
+@api_router.post("/attendance/start")
+async def attendance_start(req: GpsPunch, user=Depends(get_current_user)):
+    date = ist_date_str()
+    existing = await db.attendance.find_one({"salesperson_id": user["id"], "date": date}, {"_id": 0})
+    if existing:
+        raise HTTPException(400, "Day already started")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "salesperson_id": user["id"],
+        "salesperson_name": user.get("name"),
+        "date": date,
+        "start_time": now_utc(),
+        "start_lat": req.latitude,
+        "start_lng": req.longitude,
+        "created_at": now_utc(),
+    }
+    await db.attendance.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.post("/attendance/end")
+async def attendance_end(req: GpsPunch, user=Depends(get_current_user)):
+    date = ist_date_str()
+    doc = await db.attendance.find_one({"salesperson_id": user["id"], "date": date})
+    if not doc:
+        raise HTTPException(400, "Start your day first")
+    if doc.get("end_time"):
+        raise HTTPException(400, "Day already ended")
+    end = now_utc()
+    duration = int((end - _aware_dt(doc["start_time"])).total_seconds() // 60)
+    await db.attendance.update_one(
+        {"id": doc["id"]},
+        {"$set": {"end_time": end, "end_lat": req.latitude, "end_lng": req.longitude, "duration_minutes": duration}},
+    )
+    updated = await db.attendance.find_one({"id": doc["id"]}, {"_id": 0})
+    return updated
+
+
+@api_router.get("/attendance")
+async def attendance_list(user=Depends(get_current_user), salesperson_id: Optional[str] = None):
+    if user["role"] in ("super_admin", "sales_manager"):
+        filt = {"salesperson_id": salesperson_id} if salesperson_id else {}
+    else:
+        filt = {"salesperson_id": user["id"]}
+    docs = await db.attendance.find(filt, {"_id": 0}).sort("date", -1).to_list(90)
+    return docs
+
+
+# ----- Expenses -----
+@api_router.post("/expenses")
+async def create_expense(req: ExpenseCreate, user=Depends(get_current_user)):
+    if req.amount <= 0:
+        raise HTTPException(400, "Amount must be greater than zero")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "salesperson_id": user["id"],
+        "salesperson_name": user.get("name"),
+        "expense_date": req.expense_date or ist_date_str(),
+        "category": req.category,
+        "amount": req.amount,
+        "remarks": req.remarks,
+        "bill_photo": req.bill_photo,
+        "status": "Pending",
+        "created_at": now_utc(),
+    }
+    await db.expenses.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/expenses")
+async def list_expenses(user=Depends(get_current_user), status: Optional[str] = None):
+    filt: dict = {} if user["role"] in ("super_admin", "sales_manager") else {"salesperson_id": user["id"]}
+    if status:
+        filt["status"] = status
+    docs = await db.expenses.find(filt, {"_id": 0}).sort("created_at", -1).to_list(300)
+    return docs
+
+
+@api_router.put("/expenses/{expense_id}/review")
+async def review_expense(expense_id: str, req: ReviewRequest, user=Depends(get_current_user)):
+    require_admin(user)
+    if req.status not in ("Approved", "Rejected"):
+        raise HTTPException(400, "Status must be Approved or Rejected")
+    res = await db.expenses.update_one(
+        {"id": expense_id},
+        {"$set": {"status": req.status, "review_comment": req.comment, "reviewed_by": user.get("name"), "reviewed_at": now_utc()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(404, "Expense not found")
+    return await db.expenses.find_one({"id": expense_id}, {"_id": 0})
+
+
+# ----- Complaints -----
+@api_router.post("/complaints")
+async def create_complaint(req: ComplaintCreate, user=Depends(get_current_user)):
+    retailer = await db.retailers.find_one({"id": req.retailer_id}, {"_id": 0})
+    if not retailer:
+        raise HTTPException(404, "Retailer not found")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "complaint_no": f"CMP{int(datetime.now(timezone.utc).timestamp())}",
+        "retailer_id": req.retailer_id,
+        "retailer_name": retailer.get("shop_name"),
+        "salesperson_id": user["id"],
+        "salesperson_name": user.get("name"),
+        "category": req.category,
+        "description": req.description,
+        "photo_path": req.photo_path,
+        "status": "Open",
+        "created_at": now_utc(),
+        "updated_at": now_utc(),
+    }
+    await db.complaints.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/complaints")
+async def list_complaints(user=Depends(get_current_user), status: Optional[str] = None):
+    filt: dict = {} if user["role"] in ("super_admin", "sales_manager") else {"salesperson_id": user["id"]}
+    if status:
+        filt["status"] = status
+    docs = await db.complaints.find(filt, {"_id": 0}).sort("created_at", -1).to_list(300)
+    return docs
+
+
+@api_router.put("/complaints/{complaint_id}/review")
+async def review_complaint(complaint_id: str, req: ReviewRequest, user=Depends(get_current_user)):
+    require_admin(user)
+    if req.status not in ("Open", "In Progress", "Resolved"):
+        raise HTTPException(400, "Invalid status")
+    update: dict = {"status": req.status, "updated_at": now_utc()}
+    if req.status == "Resolved":
+        update["resolution_note"] = req.comment
+        update["resolved_by"] = user.get("name")
+        update["resolved_at"] = now_utc()
+    res = await db.complaints.update_one({"id": complaint_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Complaint not found")
+    return await db.complaints.find_one({"id": complaint_id}, {"_id": 0})
+
+
+# ----- Admin: Overview -----
+@api_router.get("/admin/overview")
+async def admin_overview(user=Depends(get_current_user), range: str = "30d"):
+    require_admin(user)
+    now = now_utc()
+    start = None
+    if range == "today":
+        start = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc)
+    elif range == "7d":
+        start = now - timedelta(days=7)
+    elif range == "30d":
+        start = now - timedelta(days=30)
+
+    created_filt = {"created_at": {"$gte": start}} if start else {}
+    orders = await db.orders.find(created_filt, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    total_sales = sum(o.get("net_value", 0) for o in orders)
+
+    visit_filt = {"start_time": {"$gte": start}} if start else {}
+    visits = await db.visits.find(visit_filt, {"_id": 0, "salesperson_id": 1}).to_list(5000)
+
+    colls = await db.collections.find(created_filt, {"_id": 0}).to_list(5000)
+    total_collection = sum(c.get("amount", 0) for c in colls)
+
+    new_retailers = await db.retailers.count_documents(created_filt)
+    active_retailers = await db.retailers.count_documents({"status": "Active"})
+    out_agg = await db.retailers.aggregate([{"$group": {"_id": None, "t": {"$sum": "$outstanding"}}}]).to_list(1)
+    total_outstanding = round(out_agg[0]["t"], 2) if out_agg else 0
+
+    # Salesperson summary
+    sps = await db.users.find({"role": "salesperson"}, {"_id": 0, "password_hash": 0}).to_list(200)
+    sp_stats = {s["id"]: {"sales": 0.0, "orders": 0, "collection": 0.0, "visits": 0} for s in sps}
+    for o in orders:
+        st = sp_stats.get(o.get("salesperson_id"))
+        if st:
+            st["sales"] += o.get("net_value", 0)
+            st["orders"] += 1
+    for c in colls:
+        st = sp_stats.get(c.get("salesperson_id"))
+        if st:
+            st["collection"] += c.get("amount", 0)
+    for v in visits:
+        st = sp_stats.get(v.get("salesperson_id"))
+        if st:
+            st["visits"] += 1
+    salesperson_summary = [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "employee_id": s["employee_id"],
+            "territory": s.get("territory", ""),
+            "sales": round(sp_stats[s["id"]]["sales"], 2),
+            "orders": sp_stats[s["id"]]["orders"],
+            "visits": sp_stats[s["id"]]["visits"],
+            "collection": round(sp_stats[s["id"]]["collection"], 2),
+        }
+        for s in sps
+    ]
+    salesperson_summary.sort(key=lambda x: -x["sales"])
+
+    # Brand summary
+    brand_stats: dict = {}
+    for o in orders:
+        for it in o.get("items", []):
+            b = it.get("brand", "OTHER")
+            bs = brand_stats.setdefault(b, {"qty": 0, "value": 0.0})
+            bs["qty"] += it.get("quantity", 0)
+            bs["value"] += it.get("amount", 0)
+    brand_summary = [
+        {"brand": b, "qty": v["qty"], "value": round(v["value"], 2)}
+        for b, v in sorted(brand_stats.items(), key=lambda kv: -kv[1]["value"])
+    ]
+
+    pending_expenses = await db.expenses.count_documents({"status": "Pending"})
+    open_complaints = await db.complaints.count_documents({"status": {"$in": ["Open", "In Progress"]}})
+
+    return {
+        "range": range,
+        "total_sales": round(total_sales, 2),
+        "total_orders": len(orders),
+        "total_visits": len(visits),
+        "total_collection": round(total_collection, 2),
+        "new_retailers": new_retailers,
+        "active_retailers": active_retailers,
+        "total_outstanding": total_outstanding,
+        "pending_expenses": pending_expenses,
+        "open_complaints": open_complaints,
+        "salesperson_summary": salesperson_summary,
+        "brand_summary": brand_summary,
+        "recent_orders": orders[:10],
+    }
+
+
+# ----- Admin: Products CRUD -----
+@api_router.get("/admin/products")
+async def admin_products(user=Depends(get_current_user)):
+    require_admin(user)
+    return await db.products.find({}, {"_id": 0}).sort([("brand", 1), ("name", 1)]).to_list(1000)
+
+
+@api_router.post("/admin/products")
+async def admin_create_product(req: ProductCreate, user=Depends(get_current_user)):
+    require_admin(user)
+    existing = await db.products.find_one({"sku_code": req.sku_code}, {"_id": 0, "sku_code": 1})
+    if existing:
+        raise HTTPException(400, f"SKU code {req.sku_code} already exists")
+    doc = {"id": str(uuid.uuid4()), **req.dict(), "created_at": now_utc(), "updated_at": now_utc()}
+    await db.products.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/admin/products/{product_id}")
+async def admin_update_product(product_id: str, req: ProductUpdate, user=Depends(get_current_user)):
+    require_admin(user)
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    if "sku_code" in updates:
+        dup = await db.products.find_one({"sku_code": updates["sku_code"], "id": {"$ne": product_id}})
+        if dup:
+            raise HTTPException(400, f"SKU code {updates['sku_code']} already exists")
+    updates["updated_at"] = now_utc()
+    res = await db.products.update_one({"id": product_id}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Product not found")
+    return await db.products.find_one({"id": product_id}, {"_id": 0})
+
+
+# ----- Admin: Users CRUD -----
+@api_router.get("/admin/users")
+async def admin_users(user=Depends(get_current_user)):
+    require_admin(user)
+    return await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("employee_id", 1).to_list(500)
+
+
+@api_router.post("/admin/users")
+async def admin_create_user(req: UserCreate, user=Depends(get_current_user)):
+    require_admin(user)
+    if req.role not in ("super_admin", "sales_manager", "salesperson", "distributor"):
+        raise HTTPException(400, "Invalid role")
+    emp_id = req.employee_id.strip().upper()
+    existing = await db.users.find_one({"employee_id": emp_id})
+    if existing:
+        raise HTTPException(400, f"Employee ID {emp_id} already exists")
+    if len(req.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "employee_id": emp_id,
+        "name": req.name,
+        "role": req.role,
+        "mobile": req.mobile,
+        "territory": req.territory,
+        "password_hash": hash_password(req.password),
+        "active": True,
+        "created_at": now_utc(),
+    }
+    await db.users.insert_one(doc)
+    doc.pop("_id", None)
+    doc.pop("password_hash", None)
+    return doc
+
+
+@api_router.put("/admin/users/{user_id}")
+async def admin_update_user(user_id: str, req: UserUpdate, user=Depends(get_current_user)):
+    require_admin(user)
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if "role" in updates and updates["role"] not in ("super_admin", "sales_manager", "salesperson", "distributor"):
+        raise HTTPException(400, "Invalid role")
+    if "password" in updates:
+        if len(updates["password"]) < 6:
+            raise HTTPException(400, "Password must be at least 6 characters")
+        updates["password_hash"] = hash_password(updates.pop("password"))
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    updates["updated_at"] = now_utc()
+    res = await db.users.update_one({"id": user_id}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(404, "User not found")
+    return await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
 
 
 @api_router.get("/")

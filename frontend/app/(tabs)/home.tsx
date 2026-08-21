@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api } from '@/src/api';
 import { useAuth } from '@/src/AuthContext';
+import { useOfflineSync } from '@/src/offline';
 import { theme, fmtINR } from '@/src/theme';
 
 function KpiCard({ label, value, icon, tone }: { label: string; value: string; icon: any; tone: 'brand' | 'success' | 'warning' | 'info' }) {
@@ -39,6 +40,7 @@ export default function Home() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const { isOnline, pending, sync } = useOfflineSync();
 
   const load = useCallback(async () => {
     try {
@@ -89,6 +91,19 @@ export default function Home() {
           </View>
         )}
       </LinearGradient>
+
+      {(!isOnline || pending > 0) && (
+        <Pressable
+          testID="offline-banner"
+          onPress={async () => { const r = await sync(); if (r.synced > 0) load(); }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: !isOnline ? '#FDECD3' : '#D1F0F7' }}
+        >
+          <MaterialCommunityIcons name={!isOnline ? 'wifi-off' : 'cloud-upload-outline'} size={18} color={!isOnline ? theme.colors.warning : theme.colors.info} />
+          <Text style={{ flex: 1, fontSize: 12, fontWeight: '700', color: !isOnline ? theme.colors.warning : theme.colors.info }}>
+            {!isOnline ? `Offline mode — ${pending} item${pending === 1 ? '' : 's'} waiting to sync` : `${pending} offline item${pending === 1 ? '' : 's'} pending — tap to sync`}
+          </Text>
+        </Pressable>
+      )}
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 40 }}

@@ -10,7 +10,7 @@ const items = [
   { key: 'complaints', label: 'Complaints', icon: 'alert-circle-outline' as const, route: '/complaints' },
   { key: 'expenses', label: 'Expenses', icon: 'wallet-outline' as const, route: '/expenses' },
   { key: 'attendance', label: 'Attendance', icon: 'calendar-check-outline' as const, route: '/attendance' },
-  { key: 'performance', label: 'Performance', icon: 'chart-bar' as const, route: '/performance' },
+  { key: 'performance', label: 'Performance', icon: 'chart-bar' as const, route: null },
 ];
 
 export default function More() {
@@ -42,7 +42,7 @@ export default function More() {
             key={it.key}
             testID={`more-${it.key}`}
             style={styles.row}
-            onPress={() => alert(`${it.label} module coming soon`)}
+            onPress={() => (it.route ? router.push(it.route as any) : alert(`${it.label} module coming soon`))}
           >
             <View style={styles.rowIcon}>
               <MaterialCommunityIcons name={it.icon} size={22} color={theme.colors.brand} />

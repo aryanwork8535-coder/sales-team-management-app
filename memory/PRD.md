@@ -29,8 +29,16 @@ A production-oriented FMCG Sales Force Management mobile app (Expo/React Native)
 - Utility-focused Material You: tonal surfaces, high-contrast, no glassmorphism (per field-use design guidelines).
 - 48pt min touch targets, ₹ (Indian) formatting.
 
+## Modules (Iteration 2)
+- **Admin Web Panel** (role-based routing: super_admin/sales_manager → `/admin` desktop layout with sidebar): Dashboard (KPI cards, range filters today/7d/30d/all, salesperson performance, brand-wise sales, recent orders), Orders table, Products CRUD (add/edit/toggle active, unique SKU), Users CRUD (add/edit/password reset/deactivate), Expense approvals (approve/reject with bill photo view), Complaint resolution (Open → In Progress → Resolved with note).
+- **Attendance**: Start Day / End Day with GPS punch (`/api/attendance/*`), IST date, duration; history list; admin can view all.
+- **Expenses**: Salesperson submits (category, amount, remarks, bill photo via Object Storage); Pending → Approved/Rejected by manager or super admin.
+- **Complaints**: Salesperson logs against retailer (category, description, photo); admin resolves. Entry from More tab and retailer profile "Log Complaint".
+- **Offline Mode**: Orders and visits queue in AsyncStorage on network failure (`src/offline.ts`), auto-sync via NetInfo when back online, home-screen banner with pending count + tap-to-sync. Backend idempotency via `client_id`; offline timestamps honored via `client_time`.
+- **Collections list screen** under More tab.
+
 ## Deferred (future iterations)
-Admin web dashboard, complaints CRUD, expenses & attendance modules, targets management UI, offline sync, advanced reports, notifications, image uploads on visits/receipts UI (backend endpoints ready).
+Targets management UI, performance screen, advanced reports, notifications, beat plan management from admin.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.

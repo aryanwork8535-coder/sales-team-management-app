@@ -48,7 +48,33 @@ export const api = {
   createCollection: (data: any) => apiFetch('/collections', { method: 'POST', body: JSON.stringify(data) }),
   collections: (retailer_id?: string) => apiFetch(`/collections${retailer_id ? `?retailer_id=${retailer_id}` : ''}`),
   schemeCalc: (items: any) => apiFetch('/schemes/calculate', { method: 'POST', body: JSON.stringify({ items }) }),
+  // Attendance
+  attendanceToday: () => apiFetch('/attendance/today'),
+  attendanceStart: (data: any) => apiFetch('/attendance/start', { method: 'POST', body: JSON.stringify(data) }),
+  attendanceEnd: (data: any) => apiFetch('/attendance/end', { method: 'POST', body: JSON.stringify(data) }),
+  attendanceList: (salesperson_id?: string) => apiFetch(`/attendance${salesperson_id ? `?salesperson_id=${salesperson_id}` : ''}`),
+  // Expenses
+  expenses: (status?: string) => apiFetch(`/expenses${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  createExpense: (data: any) => apiFetch('/expenses', { method: 'POST', body: JSON.stringify(data) }),
+  reviewExpense: (id: string, data: any) => apiFetch(`/expenses/${id}/review`, { method: 'PUT', body: JSON.stringify(data) }),
+  // Complaints
+  complaints: (status?: string) => apiFetch(`/complaints${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  createComplaint: (data: any) => apiFetch('/complaints', { method: 'POST', body: JSON.stringify(data) }),
+  reviewComplaint: (id: string, data: any) => apiFetch(`/complaints/${id}/review`, { method: 'PUT', body: JSON.stringify(data) }),
+  // Admin
+  adminOverview: (range: string) => apiFetch(`/admin/overview?range=${range}`),
+  adminProducts: () => apiFetch('/admin/products'),
+  adminCreateProduct: (data: any) => apiFetch('/admin/products', { method: 'POST', body: JSON.stringify(data) }),
+  adminUpdateProduct: (id: string, data: any) => apiFetch(`/admin/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminUsers: () => apiFetch('/admin/users'),
+  adminCreateUser: (data: any) => apiFetch('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
+  adminUpdateUser: (id: string, data: any) => apiFetch(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 };
+
+export function isNetworkError(e: any): boolean {
+  const m = String(e?.message || '');
+  return m.includes('Network request failed') || m.includes('Failed to fetch') || m.includes('Load failed');
+}
 
 export async function setToken(t: string | null) {
   if (t) await AsyncStorage.setItem(TOKEN_KEY, t);

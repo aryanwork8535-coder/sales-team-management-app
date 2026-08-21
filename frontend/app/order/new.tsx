@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Alert
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { api } from '@/src/api';
+import { api, isNetworkError } from '@/src/api';
+import { enqueue, localId } from '@/src/offline';
 import { theme, fmtINR } from '@/src/theme';
 
 export default function NewOrder() {
@@ -74,18 +75,26 @@ export default function NewOrder() {
   const submit = async () => {
     if (items.length === 0) { Alert.alert('Empty order', 'Add at least one product'); return; }
     setBusy(true);
+    const payload = {
+      retailer_id: retailer_id as string,
+      items: items.map(i => ({ product_id: i.product.id, quantity: i.qty, rate: i.rate, discount: 0 })),
+      remarks: '',
+      client_id: localId(),
+    };
     try {
-      const payload = {
-        retailer_id: retailer_id as string,
-        items: items.map(i => ({ product_id: i.product.id, quantity: i.qty, rate: i.rate, discount: 0 })),
-        remarks: '',
-      };
       const order = await api.createOrder(payload);
       Alert.alert('Order Placed', `${order.order_no}\n${fmtINR(order.net_value)}`, [
         { text: 'OK', onPress: () => router.replace('/(tabs)/orders') },
       ]);
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      if (isNetworkError(e)) {
+        await enqueue('/orders', payload, `Order for ${retailer?.shop_name}`);
+        Alert.alert('Saved Offline', `No network — order of ${fmtINR(subtotal)} saved on device. It will sync automatically when you're back online.`, [
+          { text: 'OK', onPress: () => router.replace('/(tabs)/orders') },
+        ]);
+      } else {
+        Alert.alert('Error', e.message);
+      }
     } finally {
       setBusy(false);
     }

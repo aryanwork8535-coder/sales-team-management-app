@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { Image } from 'expo-image';
-import { api } from '@/src/api';
+import { api, isNetworkError } from '@/src/api';
+import { enqueue, localId } from '@/src/offline';
 import { theme, fmtINR } from '@/src/theme';
 
 const COVER = 'https://images.pexels.com/photos/19566900/pexels-photo-19566900.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940';
@@ -45,11 +46,20 @@ export default function RetailerDetail() {
           lat = pos.coords.latitude; lng = pos.coords.longitude; acc = pos.coords.accuracy;
         } catch {}
       }
-      const v = await api.startVisit({ retailer_id: id, latitude: lat, longitude: lng, gps_accuracy: acc });
-      setActiveVisit(v);
-      Alert.alert('Visit Started', lat ? 'GPS verified' : 'GPS unavailable — recorded without location');
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
+      const payload = { retailer_id: id, latitude: lat, longitude: lng, gps_accuracy: acc, client_id: localId(), client_time: new Date().toISOString() };
+      try {
+        const v = await api.startVisit(payload);
+        setActiveVisit(v);
+        Alert.alert('Visit Started', lat ? 'GPS verified' : 'GPS unavailable — recorded without location');
+      } catch (e: any) {
+        if (isNetworkError(e)) {
+          await enqueue('/visits/start', payload, `Visit start — ${data?.shop_name}`);
+          setActiveVisit({ id: payload.client_id, start_time: payload.client_time, offline: true });
+          Alert.alert('Saved Offline', 'No network — visit started on device and will sync automatically.');
+        } else {
+          Alert.alert('Error', e.message);
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -66,12 +76,27 @@ export default function RetailerDetail() {
       } catch {}
       let reason: string | undefined;
       if (result === 'NO_ORDER') reason = 'Stock Available';
-      await api.completeVisit({ visit_id: activeVisit.id, latitude: lat, longitude: lng, result, no_order_reason: reason });
-      setActiveVisit(null);
-      Alert.alert('Visit Complete', 'Visit recorded successfully');
-      load();
-    } catch (e: any) {
-      Alert.alert('Error', e.message);
+      const payload = { visit_id: activeVisit.id, latitude: lat, longitude: lng, result, no_order_reason: reason, client_time: new Date().toISOString() };
+      try {
+        if (activeVisit.offline) {
+          // start is still queued — queue the completion too, backend will process in order
+          await enqueue('/visits/complete', payload, `Visit complete — ${data?.shop_name}`);
+          Alert.alert('Saved Offline', 'Visit completion saved on device and will sync automatically.');
+        } else {
+          await api.completeVisit(payload);
+          Alert.alert('Visit Complete', 'Visit recorded successfully');
+        }
+        setActiveVisit(null);
+        load();
+      } catch (e: any) {
+        if (isNetworkError(e)) {
+          await enqueue('/visits/complete', payload, `Visit complete — ${data?.shop_name}`);
+          setActiveVisit(null);
+          Alert.alert('Saved Offline', 'No network — visit completion saved on device and will sync automatically.');
+        } else {
+          Alert.alert('Error', e.message);
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -160,6 +185,12 @@ export default function RetailerDetail() {
               >
                 <MaterialCommunityIcons name="navigation-variant-outline" size={20} color={theme.colors.brand} />
                 <Text style={styles.actionText}>Navigate</Text>
+              </Pressable>
+            </View>
+            <View style={styles.actionRow}>
+              <Pressable testID="log-complaint-btn" style={styles.action} onPress={() => router.push(`/complaint/new?retailer_id=${id}`)}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={20} color={theme.colors.brand} />
+                <Text style={styles.actionText}>Log Complaint</Text>
               </Pressable>
             </View>
           </View>

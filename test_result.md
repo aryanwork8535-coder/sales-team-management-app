@@ -101,3 +101,92 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+## Iteration 2 — Phases A-D (Admin Web Panel, Attendance & Expenses, Complaints, Offline Mode)
+
+backend:
+  - task: "Attendance API (start/end/today/list with GPS)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Expenses API (create with bill photo, list, admin review approve/reject)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Complaints API (create with photo, list, admin review Open/In Progress/Resolved)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Admin overview API (/api/admin/overview with range filters)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Admin products CRUD (/api/admin/products GET/POST/PUT, sku unique, active toggle)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Admin users CRUD (/api/admin/users GET/POST/PUT, password hash, role validation)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Offline sync idempotency (client_id on orders and visits, client_time honored)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+
+frontend:
+  - task: "Role-based routing: admin/manager -> /admin web panel, salesperson -> tabs"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/index.tsx, /app/frontend/app/admin/_layout.tsx"
+    needs_retesting: true
+  - task: "Admin dashboard with KPIs, range filter, salesperson/brand tables"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/index.tsx"
+    needs_retesting: true
+  - task: "Admin products/users management with add/edit modals"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/products.tsx, /app/frontend/app/admin/users.tsx"
+    needs_retesting: true
+  - task: "Admin expense approvals and complaint resolution"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/expenses.tsx, /app/frontend/app/admin/complaints.tsx"
+    needs_retesting: true
+  - task: "Mobile Attendance screen (Start Day / End Day GPS)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/attendance.tsx"
+    needs_retesting: true
+  - task: "Mobile Expenses list + new expense with bill photo"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/expenses.tsx, /app/frontend/app/expense/new.tsx"
+    needs_retesting: true
+  - task: "Mobile Complaints list + new complaint with retailer picker"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/complaints.tsx, /app/frontend/app/complaint/new.tsx"
+    needs_retesting: true
+  - task: "Mobile Collections list screen + More tab routing"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/collections.tsx, /app/frontend/app/(tabs)/more.tsx"
+    needs_retesting: true
+  - task: "Offline queue (orders/visits saved offline, home banner, auto-sync via NetInfo)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/offline.ts, /app/frontend/app/order/new.tsx, /app/frontend/app/retailer/[id].tsx"
+    needs_retesting: true
+
+agent_communication:
+  - agent: "main"
+    message: "Iteration 2 complete. Added Admin Web Panel (role-based routing on login: EMP001/EMP002 land on /admin desktop layout), Attendance (start/end day GPS), Expenses with bill photo upload + admin approval, Complaints with photos + admin resolution, Offline queue for orders/visits with client_id idempotency. Smoke tested: admin dashboard renders at 1440px, mobile attendance screen works. Iteration 1 tests (16/16 backend, 5/5 frontend) previously passed — regression check core salesperson flow briefly."
