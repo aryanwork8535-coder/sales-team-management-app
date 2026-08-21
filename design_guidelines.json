@@ -1,0 +1,175 @@
+{
+  "app_name": "FieldForce Pro",
+  "personality": "2 Material You (Utility-Focused Variant)",
+  "personality_one_liner": "A highly readable, operational field-sales tool that uses tonal surfaces and clear hierarchy to make high-speed order booking and beat planning effortless in outdoor environments.",
+  "color": {
+    "surface": "#FAFBFA",
+    "onSurface": "#1A1C1A",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#2D312E",
+    "surfaceTertiary": "#EEF2F0",
+    "onSurfaceTertiary": "#434845",
+    "surfaceInverse": "#2D312E",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#0F5A3E",
+    "brandPrimary": "#0F5A3E",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E1F0E7",
+    "onBrandSecondary": "#0F5A3E",
+    "brandTertiary": "#F0F6F2",
+    "onBrandTertiary": "#1B6E4E",
+    "success": "#0D824B",
+    "onSuccess": "#FFFFFF",
+    "warning": "#D97706",
+    "onWarning": "#FFFFFF",
+    "error": "#DC2626",
+    "onError": "#FFFFFF",
+    "info": "#0891B2",
+    "onInfo": "#FFFFFF",
+    "border": "#E4E7E5",
+    "borderStrong": "#B9C2BD",
+    "divider": "#EDF0EE"
+  },
+  "typography": {
+    "displayFontFamily": "Outfit",
+    "textFontFamily": "Manrope",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous touch targets (min 48pt for primary actions). Use md/lg spacing between cards. Strict adherence to safe areas.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "MaterialCommunityIcons",
+  "glassmorphism": {
+    "enabled": "false",
+    "do's": [
+      "Use solid surfaceSecondary with borderStrong for elevation.",
+      "Ensure maximum readability in bright sunlight by avoiding blur in this utility context."
+    ],
+    "dont's": [
+      "No frosted glass or blur effects; prioritize performance and offline utility for field force."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "solid surfaceSecondary",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Login",
+      "purpose": "Secure authentication via Employee ID.",
+      "states": {
+        "loading": "Spinner on 'Login' button.",
+        "empty": "N/A",
+        "error": "Inline text below input for invalid credentials."
+      },
+      "layout": "Large brand logo at top. Single column, large input fields for Employee ID and Password. Sticky 'Login' primary CTA at the bottom inside KeyboardAvoidingView."
+    },
+    {
+      "name": "Home Dashboard",
+      "purpose": "At-a-glance performance overview and quick entry points for the day.",
+      "states": {
+        "loading": "Skeleton loader for KPI cards.",
+        "empty": "N/A",
+        "error": "Snackbar 'Failed to sync data' + Retry icon."
+      },
+      "layout": "Greeting header. 'Daily Performance' section (grid of tonal cards: Target, Sales, Visits). 'Quick Actions' row (pill buttons for New Visit, Order, Add Retailer). 'Today's Beat' preview list below. Tonal hierarchy rather than deep shadows."
+    },
+    {
+      "name": "Beat Plan",
+      "purpose": "Sequential route execution and store visit tracking.",
+      "states": {
+        "loading": "Skeleton list items.",
+        "empty": "Illustration + 'No retailers assigned today. Enjoy your rest!'",
+        "error": "Error message + Retry sync button."
+      },
+      "layout": "Sticky header with Date and 'Map View' toggle. List of retailers sorted by sequence. Each row shows Name, Distance, Status Badge (Pending/Visited), and a quick 'Start Visit' icon button."
+    },
+    {
+      "name": "Retailer Profile",
+      "purpose": "Store intelligence and primary hub for store-level actions.",
+      "states": {
+        "loading": "Skeleton over header and stats.",
+        "empty": "N/A",
+        "error": "Toast on failed load."
+      },
+      "layout": "Cover image (store photo) with gradient scrim + Title overlay. Stats row (Outstanding, Last Order). Grid of large functional touch targets: START VISIT, PLACE ORDER, COLLECT PAYMENT. Scrollable history below."
+    },
+    {
+      "name": "Order Booking",
+      "purpose": "High-speed catalog entry for product orders.",
+      "states": {
+        "loading": "Skeleton list.",
+        "empty": "Illustration + 'No products in this category'.",
+        "error": "Full-screen retry."
+      },
+      "layout": "Sticky category filter tabs (brandTertiary chips). Scrollable list of products. Each row has product name, pack size, rate, and a large +/- stepper. Sticky bottom bar showing 'Net Value (₹)' and 'Place Order' CTA."
+    },
+    {
+      "name": "Payment Collection",
+      "purpose": "Record received payments and upload receipt.",
+      "states": {
+        "loading": "Overlay spinner on submit.",
+        "empty": "N/A",
+        "error": "Inline validation errors for amounts."
+      },
+      "layout": "Form layout. Top card showing 'Outstanding Balance (₹)'. Input for 'Amount', dropdown for 'Mode' (Cash/Cheque/UPI). 'Upload Photo' dashed container. Sticky 'Record Payment' CTA."
+    }
+  ],
+  "images": {
+    "home_header_bg": {
+      "url": "https://images.unsplash.com/photo-1739066598279-1297113f5c6a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwxfHxraXJhbmElMjBzdG9yZSUyMGluZGlhbiUyMHNob3B8ZW58MHx8fHwxNzg3Mjk3MzYyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract subtle gradient overlay of an Indian retail shop"
+    },
+    "retailer_default_cover": {
+      "url": "https://images.pexels.com/photos/19566900/pexels-photo-19566900.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Indian Kirana Store front"
+    },
+    "product_category_detergent": {
+      "url": "https://images.pexels.com/photos/13768941/pexels-photo-13768941.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Detergent packets on display"
+    },
+    "empty_beat_illustration": {
+      "url": "https://images.unsplash.com/photo-1672335468275-e79517ae9f95?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwyfHxpbmRpYW4lMjBzaG9wa2VlcGVyJTIwc21pbGluZ3xlbnwwfHx8fDE3ODcyOTczNjJ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Smiling shopkeeper indicating a good day"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Follow 2 Material You (Utility-Focused Variant) strictly. Use tonal layering (surface, surfaceSecondary, surfaceTertiary) without heavy drop shadows.",
+    "BANNED COLORS: Strictly avoid Indigo, Purple, Violet, Orange, Terracotta, Navy, Royal Blue. Use the defined Forest Green (#0F5A3E) as the brand primary.",
+    "Form inputs must be large (min 48pt height) to accommodate thick fingers in field scenarios.",
+    "All monetary values MUST use the Indian Rupee symbol (₹) formatting (e.g., ₹20,000).",
+    "Use a gradient scrim (top to bottom, transparent to ≥70% surfaceInverse) whenever rendering text over an image (e.g., Retailer Profile Cover).",
+    "Ensure 'Order Booking' list items contain an inline stepper (+/-) and auto-calculates total in a sticky bottom container.",
+    "Disable glassmorphism/blur; field apps require high contrast, solid backgrounds, and maximum performance for low-end devices.",
+    "Implement bottom navigation with 5 items: HOME, BEAT, ORDERS, RETAILERS, MORE."
+  ]
+}
