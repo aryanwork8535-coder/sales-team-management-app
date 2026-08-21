@@ -240,3 +240,46 @@ frontend:
 agent_communication:
   - agent: "main"
     message: "Iteration 3 complete. Added Target Management (admin), Performance screen (mobile), Distributor view (role-based route /distributor), Attendance Report grid (admin). Smoke tested: attendance grid renders with green cell for EMP003, distributor view shows 5 pending orders + 4 claims with action buttons. Cleaned leftover test users/products from DB."
+
+## Iteration 4 — Security Hardening (post security audit)
+
+backend:
+  - task: "SEC-002 fix: GET /api/orders/{id} scoped (salesperson/distributor own only, admin all)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "SEC-003 fix: POST /api/collections validates amount>0, <=10M, retailer ownership, role restriction (distributor 403)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "SEC-004 fix: GET /api/files/{path} owner-or-admin only"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "SEC-005 fix: GET /api/collections denies distributor (403)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Public POST /api/seed endpoint removed (startup auto-seed retained)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Login brute-force protection: 5 failures/60s per employee-ID+IP -> 429 with Retry-After for 5 min; dummy bcrypt anti-enumeration; X-Forwarded-For aware"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "JWT secret rotated to 64-hex; server fails fast if secret <32 bytes; regex injection fixes (re.escape on retailer search q, validated month regex)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py, /app/backend/.env"
+    needs_retesting: true
+
+agent_communication:
+  - agent: "main"
+    message: "Security audit fixes applied. JWT secret rotated (all old tokens invalid — clients must re-login; frontend handles 401 by clearing token). In-memory brute-force limiter is per-process; restarting backend clears blocks. NOTE for testing: 5 failed logins for the same employee_id OR same client IP within 60s triggers a 5-minute 429 block — space out negative login tests or restart backend between them to reset. Demo credentials retained intentionally for preview (user will rotate via admin Users page before production)."

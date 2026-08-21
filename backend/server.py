@@ -1,16 +1,19 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Header, Request
 from fastapi.responses import Response
 from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
+import time
 import logging
 import bcrypt
 import jwt
 import uuid
 import calendar
 import requests
+from collections import defaultdict, deque
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -24,7 +27,9 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-JWT_SECRET = os.environ.get('JWT_SECRET', 'change-me')
+JWT_SECRET = os.environ.get('JWT_SECRET', '')
+if len(JWT_SECRET.encode()) < 32:
+    raise RuntimeError("JWT_SECRET env var must be set to at least 32 bytes")
 JWT_ALG = 'HS256'
 JWT_EXPIRE_HOURS = 24 * 30
 
@@ -176,13 +181,64 @@ class CollectionCreate(BaseModel):
 
 
 # ---------- Auth ----------
+# Brute-force protection: in-process fixed-window limiter (per employee ID + per IP).
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_WINDOW_SECONDS = 60
+LOGIN_BLOCK_SECONDS = 300
+_login_failures: dict = defaultdict(deque)
+_login_blocked_until: dict = {}
+DUMMY_HASH = bcrypt.hashpw(b"dummy-password-for-constant-timing", bcrypt.gensalt()).decode()
+
+
+def _login_blocked(keys: list) -> int:
+    now = time.monotonic()
+    remaining = max((_login_blocked_until.get(k, 0) - now for k in keys), default=0)
+    return max(0, int(remaining))
+
+
+def _login_failure(keys: list) -> None:
+    now = time.monotonic()
+    for key in keys:
+        q = _login_failures[key]
+        while q and q[0] <= now - LOGIN_WINDOW_SECONDS:
+            q.popleft()
+        q.append(now)
+        if len(q) >= LOGIN_MAX_ATTEMPTS:
+            _login_blocked_until[key] = now + LOGIN_BLOCK_SECONDS
+            q.clear()
+
+
+def _login_success(keys: list) -> None:
+    for key in keys:
+        _login_failures.pop(key, None)
+        _login_blocked_until.pop(key, None)
+
+
 @api_router.post("/auth/login", response_model=AuthResponse)
-async def login(req: LoginRequest):
-    user = await db.users.find_one({"employee_id": req.employee_id.upper()})
-    if not user or not verify_password(req.password, user.get("password_hash", "")):
+async def login(req: LoginRequest, request: Request):
+    emp_id = req.employee_id.strip().upper()
+    fwd = request.headers.get("x-forwarded-for")
+    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "unknown")
+    keys = [f"ip:{ip}", f"emp:{emp_id[:64]}"]
+
+    retry_after = _login_blocked(keys)
+    if retry_after:
+        raise HTTPException(
+            429,
+            "Too many login attempts. Try again in a few minutes.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    user = await db.users.find_one({"employee_id": emp_id})
+    # Always run bcrypt (dummy hash for unknown IDs) to prevent user enumeration via timing.
+    stored = user.get("password_hash") if user else DUMMY_HASH
+    valid = await run_in_threadpool(verify_password, req.password, stored or DUMMY_HASH)
+    if not user or not valid:
+        _login_failure(keys)
         raise HTTPException(401, "Invalid Employee ID or password")
     if not user.get("active", True):
         raise HTTPException(403, "Account inactive")
+    _login_success(keys)
     token = create_token(user["id"], user["role"])
     user.pop("_id", None)
     user.pop("password_hash", None)
@@ -265,10 +321,11 @@ async def list_retailers(user=Depends(get_current_user), q: Optional[str] = None
     elif user["role"] == "distributor":
         filt["distributor_id"] = user["id"]
     if q:
+        safe_q = re.escape(q)
         filt["$or"] = [
-            {"shop_name": {"$regex": q, "$options": "i"}},
-            {"mobile": {"$regex": q}},
-            {"owner_name": {"$regex": q, "$options": "i"}},
+            {"shop_name": {"$regex": safe_q, "$options": "i"}},
+            {"mobile": {"$regex": safe_q}},
+            {"owner_name": {"$regex": safe_q, "$options": "i"}},
         ]
     docs = await db.retailers.find(filt, {"_id": 0}).sort("shop_name", 1).to_list(500)
     return docs
@@ -578,15 +635,27 @@ async def get_order(order_id: str, user=Depends(get_current_user)):
     o = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not o:
         raise HTTPException(404, "Order not found")
+    if user["role"] == "salesperson" and o.get("salesperson_id") != user["id"]:
+        raise HTTPException(403, "Not permitted")
+    if user["role"] == "distributor" and o.get("distributor_id") != user["id"]:
+        raise HTTPException(403, "Not permitted")
     return o
 
 
 # ---------- Collections ----------
 @api_router.post("/collections")
 async def create_collection(req: CollectionCreate, user=Depends(get_current_user)):
+    if user["role"] not in ("salesperson", "super_admin", "sales_manager"):
+        raise HTTPException(403, "Not permitted")
+    if req.amount <= 0:
+        raise HTTPException(400, "Amount must be greater than zero")
+    if req.amount > 10_000_000:
+        raise HTTPException(400, "Amount exceeds allowed limit")
     retailer = await db.retailers.find_one({"id": req.retailer_id})
     if not retailer:
         raise HTTPException(404, "Retailer not found")
+    if user["role"] == "salesperson" and retailer.get("salesperson_id") not in (None, user["id"]):
+        raise HTTPException(403, "Retailer is not assigned to you")
     cid = str(uuid.uuid4())
     doc = {
         "id": cid,
@@ -612,6 +681,8 @@ async def create_collection(req: CollectionCreate, user=Depends(get_current_user
 
 @api_router.get("/collections")
 async def list_collections(user=Depends(get_current_user), retailer_id: Optional[str] = None):
+    if user["role"] == "distributor":
+        raise HTTPException(403, "Not permitted")
     filt: dict = {}
     if user["role"] == "salesperson":
         filt["salesperson_id"] = user["id"]
@@ -644,12 +715,13 @@ async def download_file(path: str, user=Depends(get_current_user)):
     rec = await db.uploads.find_one({"path": path}, {"_id": 0})
     if not rec:
         raise HTTPException(404, "File not found")
+    if rec.get("owner_id") != user["id"] and user["role"] not in ("super_admin", "sales_manager"):
+        raise HTTPException(403, "Not permitted")
     content, ctype = await run_in_threadpool(get_object, path)
     return Response(content=content, media_type=ctype)
 
 
-# ---------- Seeder ----------
-@api_router.post("/seed")
+# ---------- Seeder (startup only — no public endpoint) ----------
 async def seed_data():
     # Users
     if await db.users.count_documents({}) > 0:
@@ -1483,7 +1555,7 @@ async def admin_attendance_report(user=Depends(get_current_user), month: Optiona
         days_in_month = calendar.monthrange(y, m)[1]
     except (ValueError, IndexError):
         raise HTTPException(400, "Month must be in YYYY-MM format")
-    docs = await db.attendance.find({"date": {"$regex": f"^{month}"}}, {"_id": 0}).to_list(3000)
+    docs = await db.attendance.find({"date": {"$regex": f"^{y:04d}-{m:02d}"}}, {"_id": 0}).to_list(3000)
     by_sp: dict = {}
     for d in docs:
         day = int(d["date"].split("-")[2])

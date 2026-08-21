@@ -43,6 +43,14 @@ A production-oriented FMCG Sales Force Management mobile app (Expo/React Native)
 - **Distributor View**: distributor login (EMP004) routes to `/distributor` — KPI header, orders routed to them with Mark Dispatched → Mark Delivered actions (`PUT /api/orders/{id}/status`), scheme claims with Mark Fulfilled (`GET /api/scheme-claims`, `PUT /api/scheme-claims/{id}/fulfil`).
 - **Attendance Report** (admin `/admin/attendance`): month-navigable day-wise grid per salesperson (green=full day, amber=started only), cell detail modal with punch times, duration and GPS "View on Map" links (`GET /api/admin/attendance-report?month=YYYY-MM`).
 
+## Security Hardening (Iteration 4 — post security audit)
+- Order detail, file download, and collections endpoints now enforce ownership/role checks (BOLA fixes SEC-002/003/004/005).
+- Collections validate amount (>0, ≤₹1 Cr) and retailer assignment; distributors denied.
+- Public `POST /api/seed` removed (startup auto-seed for empty DB retained).
+- Login brute-force protection: 5 failures/60s per employee-ID + per client IP → 5-min 429 block (in-memory, per-process); constant-time dummy bcrypt against user enumeration.
+- JWT secret rotated to 64-hex; server refuses to boot with a secret <32 bytes; regex injection fixed (re.escape on search, validated month regex).
+- KNOWN ACCEPTED RISKS (preview): seeded demo credentials retained for testing — MUST be rotated via Admin → Users before production launch; CORS `*` (bearer tokens, no cookies); 30-day token expiry; in-memory limiter is per-process.
+
 ## Deferred (future iterations)
 Advanced reports/exports, notifications, beat plan management from admin, retailer credit-limit enforcement.
 
