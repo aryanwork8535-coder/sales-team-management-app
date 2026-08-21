@@ -10,7 +10,7 @@ const items = [
   { key: 'complaints', label: 'Complaints', icon: 'alert-circle-outline' as const, route: '/complaints' },
   { key: 'expenses', label: 'Expenses', icon: 'wallet-outline' as const, route: '/expenses' },
   { key: 'attendance', label: 'Attendance', icon: 'calendar-check-outline' as const, route: '/attendance' },
-  { key: 'performance', label: 'Performance', icon: 'chart-bar' as const, route: null },
+  { key: 'performance', label: 'Performance', icon: 'chart-bar' as const, route: '/performance' },
 ];
 
 export default function More() {

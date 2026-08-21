@@ -37,8 +37,14 @@ A production-oriented FMCG Sales Force Management mobile app (Expo/React Native)
 - **Offline Mode**: Orders and visits queue in AsyncStorage on network failure (`src/offline.ts`), auto-sync via NetInfo when back online, home-screen banner with pending count + tap-to-sync. Backend idempotency via `client_id`; offline timestamps honored via `client_time`.
 - **Collections list screen** under More tab.
 
+## Modules (Iteration 3)
+- **Target Management**: Admin sets daily & monthly sales targets per salesperson (`/admin/targets`, `POST /api/admin/targets` upsert with history via active flag).
+- **Performance Screen** (mobile, More tab): rank & top-5 leaderboard for current month, monthly/daily target achievement bars, month stats (orders/visits/collection), 6-month sales trend chart (`GET /api/performance`).
+- **Distributor View**: distributor login (EMP004) routes to `/distributor` — KPI header, orders routed to them with Mark Dispatched → Mark Delivered actions (`PUT /api/orders/{id}/status`), scheme claims with Mark Fulfilled (`GET /api/scheme-claims`, `PUT /api/scheme-claims/{id}/fulfil`).
+- **Attendance Report** (admin `/admin/attendance`): month-navigable day-wise grid per salesperson (green=full day, amber=started only), cell detail modal with punch times, duration and GPS "View on Map" links (`GET /api/admin/attendance-report?month=YYYY-MM`).
+
 ## Deferred (future iterations)
-Targets management UI, performance screen, advanced reports, notifications, beat plan management from admin.
+Advanced reports/exports, notifications, beat plan management from admin, retailer credit-limit enforcement.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.

@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 3 comprehensive testing PASS for FMCG FieldForce Pro (Targets, Performance, Distributor, Attendance Report). BACKEND: 21/21 iteration-3 pytest tests PASS covering GET/POST /api/admin/targets (upsert deactivates old, GET reflects new, invalid period 400, negative value 400, unknown salesperson 404, sp 403), GET /api/performance (shape validated: today_sales/daily_target/month_sales/monthly_target/month_orders/month_visits/month_collection/rank int/total_salespersons/trend[6 with last=current month sales>0]/leaderboard[is_me flag], reflects new monthly target then restored to seed), GET /api/distributor/dashboard (dist counts, sp 403), GET /api/scheme-claims (retailer_name enriched, status filter, sp 403), PUT /api/scheme-claims/{id}/fulfil (dist can, double-fulfil 400, sp 403), PUT /api/orders/{id}/status (Submitted->Dispatched->Delivered flow, invalid status 400, sp 403), GET /api/admin/attendance-report (default current month, ?month=2026-07, days_in_month=31, rows[].days keyed by day with ISO start_time/end_time, bad month 400, sp 403). Full regression: all 73 tests (14 iter1 + 36 iter2 + 21 iter3 + others) PASS. FRONTEND WEB 1440x900 as EMP001: Sidebar shows new Targets and Attendance nav items alongside prior 6 items. /admin/targets: table lists 4 salespersons with daily/monthly targets, edit-target-EMP005 pencil opens modal, daily-target-input=15000 monthly-target-input=300000 save-targets-btn -> row now shows ₹15,000 / ₹3,00,000 (INR fmtINR working). /admin/attendance: month label 'August 2026', SALESPERSON column + day columns 1..31, EMP003 row shows green cell on day 21, click att-cell-EMP003-21 opens modal with 'Day Start 08:22 am', 'Day End 08:22 am', 'Duration 0h 0m', two 'View on Map' buttons; prev-month arrow -> 'July 2026' empty grid. FRONTEND MOBILE 390x844 as EMP003: home KPI cards load (regression), More tab -> Performance route: hero rank #1 of 3 salespersons, Monthly Target progress bar 0% (₹2,076 achieved / Target ₹5,00,000), Orders=7 Visits=7 Collection=₹2.0K tiles, Daily Target 10% (₹2,076/₹20,000), 6-Month Trend bar chart with August month (₹2.1K) highlighted, Leaderboard with (You) tag on rank #1. FRONTEND MOBILE as EMP004/dist@123: login routes to /distributor, dist-name = 'Mahesh Traders', KPI boxes (Pending 5, Dispatched 0, Claims Due 3), Orders tab: 5 pending order cards, click MARK DISPATCHED on first -> chip changes to 'Dispatched' and button label becomes 'MARK DELIVERED', KPI updates Pending 4/Dispatched 1; Scheme Claims tab: 5 claims, click MARK FULFILLED on a Pending claim -> chip becomes 'Fulfilled' with 'Fulfilled by Mahesh Traders' shown, KPI updates Claims Due 2; dist-logout returns to login screen. One minor React warning captured in distributor screen (setState-in-render via router.replace during render at lines 41,45 of distributor/index.tsx) — non-blocking.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "DistributorHome", "issue": "router.replace() is called during render (lines 41 and 45 of /app/frontend/app/distributor/index.tsx). React logs a console warning: 'Cannot update a component (NavigationContainerInner) while rendering a different component (DistributorHome)'. Wrap the redirect in useEffect (or use a <Redirect /> component) to satisfy React's rules-of-rendering. Non-blocking (redirect still works)."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iteration3_results.xml"
+  ],
+  "action_items": [
+    "(Minor/RN best-practice) In /app/frontend/app/distributor/index.tsx, move the two router.replace() calls (currently inside the render body at lines 41 and 45) into a useEffect so setState-in-render warning goes away. Same pattern likely exists on other role-guarded screens - grep for 'router.replace' inside component bodies."
+  ],
+  "critical_code_review_comments": [
+    "server.py POST /api/admin/targets correctly deactivates prior active targets before inserting; consider adding an index on (salesperson_id, period, active) for lookup speed at scale.",
+    "server.py GET /api/performance recomputes leaderboard per-request over all orders in current month; fine for MVP, but consider caching or aggregation pipeline for larger datasets.",
+    "server.py GET /api/admin/attendance-report validates YYYY-MM using slice indexing then int(); reasonable and returns 400 on failure. calendar.monthrange handles Feb/leap-year correctly.",
+    "distributor/index.tsx: role-guard redirect uses router.replace during render — should be useEffect (see react_native_issues)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (new, 21 tests)",
+    "/app/test_reports/pytest/iteration3_results.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (21/21 iteration-3 tests + full regression 73/73)", "frontend": "100% of tested flows - Admin /admin/targets edit+save (₹15,000/₹3,00,000 EMP005 verified), /admin/attendance August 2026 grid + day-21 GPS modal + prev-month, Mobile Performance (rank #1, monthly/daily target bars, 6-mo trend, leaderboard You), Mobile Distributor (Mahesh Traders, KPI, MARK DISPATCHED->MARK DELIVERED, MARK FULFILLED, logout), regression admin dashboard + salesperson home"},
+  "seed_data_creation": "Iteration-3 backend tests set EMP005 daily target to 18000 and monthly to 300000 (upsert cycle deactivates prior). Fulfilled 1 pending scheme claim for EMP004 (test_fulfil_and_double_fulfil). Advanced 1 EMP004 Submitted order through Dispatched -> Delivered. Restored EMP003 monthly target to 500000 after temporary change. Frontend UI additionally set EMP005 daily=15000 monthly=300000 and advanced 1 more EMP004 order to Dispatched + fulfilled 1 more scheme claim.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login inputs use testIDs login-employee-id-input / login-password-input / login-submit-button (NOT the shorter variants). Admin sidebar nav items now include nav-targets and nav-attendance (label lowercased). Targets: rows use edit-target-<EMPID>, modal fields daily-target-input / monthly-target-input, submit save-targets-btn. Attendance: month-nav prev-month / next-month, day cells att-cell-<EMPID>-<day>, modal exposes map-start / map-end. Mobile More menu key -> route: more-performance -> /performance (also more-attendance, more-expenses, more-complaints, more-collections). Performance testIDs include rank-value. Distributor testIDs: dist-name, dist-logout, tab-orders, tab-claims, dist-order-<id>, move-order-<id>, claim-<id>, fulfil-claim-<id>. After iter-3 test data creation EMP004 now has 4 Submitted / >=1 Dispatched / >=1 Delivered orders and 2 Pending / 3 Fulfilled claims. EMP005 has current active targets daily=15000 monthly=300000 (adjust in tests if re-running).",
+  "rca_of_issue": "No blocking bugs. Only non-blocking observation: DistributorHome triggers a React setState-in-render warning because role-guard uses `router.replace()` inline in the component body instead of inside a useEffect (distributor/index.tsx lines 40-47). Everything functions correctly; this is a code-quality/warning fix only."
+}

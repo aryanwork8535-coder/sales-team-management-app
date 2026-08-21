@@ -17,6 +17,7 @@ export default function Login() {
   useEffect(() => {
     if (!loading && user) {
       if (user.role === 'super_admin' || user.role === 'sales_manager') router.replace('/admin');
+      else if (user.role === 'distributor') router.replace('/distributor');
       else router.replace('/(tabs)/home');
     }
   }, [loading, user]);

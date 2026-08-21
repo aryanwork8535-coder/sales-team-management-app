@@ -11,6 +11,8 @@ const NAV = [
   { label: 'Orders', icon: 'clipboard-list-outline' as const, route: '/admin/orders' },
   { label: 'Products', icon: 'package-variant-closed' as const, route: '/admin/products' },
   { label: 'Users', icon: 'account-group-outline' as const, route: '/admin/users' },
+  { label: 'Targets', icon: 'target' as const, route: '/admin/targets' },
+  { label: 'Attendance', icon: 'calendar-check-outline' as const, route: '/admin/attendance' },
   { label: 'Expenses', icon: 'wallet-outline' as const, route: '/admin/expenses' },
   { label: 'Complaints', icon: 'alert-circle-outline' as const, route: '/admin/complaints' },
 ];
@@ -29,6 +31,7 @@ export default function AdminLayout() {
     );
   }
   if (!user) return <Redirect href="/" />;
+  if (user.role === 'distributor') return <Redirect href="/distributor" />;
   if (user.role !== 'super_admin' && user.role !== 'sales_manager') return <Redirect href="/(tabs)/home" />;
 
   return (

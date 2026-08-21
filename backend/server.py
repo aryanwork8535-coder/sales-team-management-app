@@ -9,6 +9,7 @@ import logging
 import bcrypt
 import jwt
 import uuid
+import calendar
 import requests
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -1251,6 +1252,265 @@ async def admin_update_user(user_id: str, req: UserUpdate, user=Depends(get_curr
     if res.matched_count == 0:
         raise HTTPException(404, "User not found")
     return await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+
+
+# ----- Admin: Targets -----
+class TargetSet(BaseModel):
+    salesperson_id: str
+    period: str  # daily | monthly
+    value: float
+
+
+@api_router.get("/admin/targets")
+async def admin_targets(user=Depends(get_current_user)):
+    require_admin(user)
+    sps = await db.users.find({"role": "salesperson"}, {"_id": 0, "password_hash": 0}).sort("employee_id", 1).to_list(200)
+    targets = await db.targets.find({"active": True}, {"_id": 0}).to_list(1000)
+    tmap: dict = {}
+    for t in targets:
+        tmap.setdefault(t["salesperson_id"], {})[t["period"]] = t["value"]
+    return [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "employee_id": s["employee_id"],
+            "territory": s.get("territory", ""),
+            "active": s.get("active", True),
+            "daily_target": tmap.get(s["id"], {}).get("daily", 0),
+            "monthly_target": tmap.get(s["id"], {}).get("monthly", 0),
+        }
+        for s in sps
+    ]
+
+
+@api_router.post("/admin/targets")
+async def admin_set_target(req: TargetSet, user=Depends(get_current_user)):
+    require_admin(user)
+    if req.period not in ("daily", "monthly"):
+        raise HTTPException(400, "Period must be daily or monthly")
+    if req.value < 0:
+        raise HTTPException(400, "Target must be zero or more")
+    sp = await db.users.find_one({"id": req.salesperson_id, "role": "salesperson"})
+    if not sp:
+        raise HTTPException(404, "Salesperson not found")
+    await db.targets.update_many(
+        {"salesperson_id": req.salesperson_id, "period": req.period, "active": True},
+        {"$set": {"active": False}},
+    )
+    doc = {
+        "id": str(uuid.uuid4()),
+        "salesperson_id": req.salesperson_id,
+        "period": req.period,
+        "metric": "sales_value",
+        "value": req.value,
+        "active": True,
+        "set_by": user["id"],
+        "created_at": now_utc(),
+    }
+    await db.targets.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+# ----- Salesperson Performance -----
+def _month_add(y: int, m: int, delta: int):
+    idx = y * 12 + (m - 1) + delta
+    return idx // 12, idx % 12 + 1
+
+
+@api_router.get("/performance")
+async def performance(user=Depends(get_current_user)):
+    sp_id = user["id"]
+    now = now_utc()
+    month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    today_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc)
+
+    daily_t = await db.targets.find_one({"salesperson_id": sp_id, "period": "daily", "active": True}, {"_id": 0})
+    monthly_t = await db.targets.find_one({"salesperson_id": sp_id, "period": "monthly", "active": True}, {"_id": 0})
+    daily_target = daily_t["value"] if daily_t else 0
+    monthly_target = monthly_t["value"] if monthly_t else 0
+
+    y0, m0 = _month_add(now.year, now.month, -5)
+    window_start = datetime(y0, m0, 1, tzinfo=timezone.utc)
+    orders = await db.orders.find(
+        {"salesperson_id": sp_id, "created_at": {"$gte": window_start}},
+        {"_id": 0, "net_value": 1, "created_at": 1},
+    ).to_list(10000)
+
+    trend = []
+    for i in range(-5, 1):
+        y, m = _month_add(now.year, now.month, i)
+        trend.append({"month": f"{y}-{m:02d}", "label": datetime(y, m, 1).strftime("%b"), "sales": 0.0})
+    tmap = {t["month"]: t for t in trend}
+
+    month_sales = 0.0
+    today_sales = 0.0
+    month_orders = 0
+    for o in orders:
+        dt = _aware_dt(o["created_at"])
+        key = f"{dt.year}-{dt.month:02d}"
+        if key in tmap:
+            tmap[key]["sales"] += o.get("net_value", 0)
+        if dt >= month_start:
+            month_sales += o.get("net_value", 0)
+            month_orders += 1
+        if dt >= today_start:
+            today_sales += o.get("net_value", 0)
+    for t in trend:
+        t["sales"] = round(t["sales"], 2)
+
+    month_visits = await db.visits.count_documents({"salesperson_id": sp_id, "start_time": {"$gte": month_start}})
+    colls = await db.collections.find(
+        {"salesperson_id": sp_id, "created_at": {"$gte": month_start}}, {"_id": 0, "amount": 1}
+    ).to_list(5000)
+    month_collection = sum(c.get("amount", 0) for c in colls)
+
+    # Rank among active salespersons by current-month sales
+    sps = await db.users.find({"role": "salesperson", "active": True}, {"_id": 0, "id": 1, "name": 1}).to_list(200)
+    all_orders = await db.orders.find(
+        {"created_at": {"$gte": month_start}}, {"_id": 0, "salesperson_id": 1, "net_value": 1}
+    ).to_list(20000)
+    sales_by_sp = {s["id"]: 0.0 for s in sps}
+    for o in all_orders:
+        if o.get("salesperson_id") in sales_by_sp:
+            sales_by_sp[o["salesperson_id"]] += o.get("net_value", 0)
+    ranking = sorted(sales_by_sp.items(), key=lambda kv: -kv[1])
+    rank = next((i + 1 for i, (sid, _) in enumerate(ranking) if sid == sp_id), None)
+    name_map = {s["id"]: s["name"] for s in sps}
+    leaderboard = [
+        {"rank": i + 1, "name": name_map.get(sid, ""), "sales": round(v, 2), "is_me": sid == sp_id}
+        for i, (sid, v) in enumerate(ranking[:5])
+    ]
+
+    return {
+        "today_sales": round(today_sales, 2),
+        "daily_target": daily_target,
+        "month_sales": round(month_sales, 2),
+        "monthly_target": monthly_target,
+        "month_orders": month_orders,
+        "month_visits": month_visits,
+        "month_collection": round(month_collection, 2),
+        "rank": rank,
+        "total_salespersons": len(sps),
+        "trend": trend,
+        "leaderboard": leaderboard,
+    }
+
+
+# ----- Distributor -----
+@api_router.get("/distributor/dashboard")
+async def distributor_dashboard(user=Depends(get_current_user)):
+    if user["role"] != "distributor":
+        raise HTTPException(403, "Distributor access required")
+    pending_orders = await db.orders.count_documents({"distributor_id": user["id"], "status": "Submitted"})
+    dispatched_orders = await db.orders.count_documents({"distributor_id": user["id"], "status": "Dispatched"})
+    delivered_orders = await db.orders.count_documents({"distributor_id": user["id"], "status": "Delivered"})
+    pending_claims = await db.scheme_claims.count_documents({"distributor_id": user["id"], "status": "Pending"})
+    return {
+        "pending_orders": pending_orders,
+        "dispatched_orders": dispatched_orders,
+        "delivered_orders": delivered_orders,
+        "pending_claims": pending_claims,
+    }
+
+
+class OrderStatusUpdate(BaseModel):
+    status: str  # Dispatched | Delivered
+
+
+@api_router.put("/orders/{order_id}/status")
+async def update_order_status(order_id: str, req: OrderStatusUpdate, user=Depends(get_current_user)):
+    if req.status not in ("Dispatched", "Delivered"):
+        raise HTTPException(400, "Status must be Dispatched or Delivered")
+    if user["role"] not in ("distributor", "super_admin", "sales_manager"):
+        raise HTTPException(403, "Not permitted")
+    o = await db.orders.find_one({"id": order_id})
+    if not o:
+        raise HTTPException(404, "Order not found")
+    if user["role"] == "distributor" and o.get("distributor_id") != user["id"]:
+        raise HTTPException(403, "Not permitted")
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {"status": req.status, "status_updated_by": user.get("name"), "updated_at": now_utc()}},
+    )
+    return await db.orders.find_one({"id": order_id}, {"_id": 0})
+
+
+@api_router.get("/scheme-claims")
+async def list_scheme_claims(user=Depends(get_current_user), status: Optional[str] = None):
+    if user["role"] not in ("distributor", "super_admin", "sales_manager"):
+        raise HTTPException(403, "Not permitted")
+    filt: dict = {}
+    if user["role"] == "distributor":
+        filt["distributor_id"] = user["id"]
+    if status:
+        filt["status"] = status
+    docs = await db.scheme_claims.find(filt, {"_id": 0}).sort("created_at", -1).to_list(500)
+    rids = list({d["retailer_id"] for d in docs})
+    rdocs = await db.retailers.find({"id": {"$in": rids}}, {"_id": 0, "id": 1, "shop_name": 1}).to_list(1000)
+    rmap = {r["id"]: r["shop_name"] for r in rdocs}
+    for d in docs:
+        d["retailer_name"] = rmap.get(d["retailer_id"], "")
+    return docs
+
+
+@api_router.put("/scheme-claims/{claim_id}/fulfil")
+async def fulfil_scheme_claim(claim_id: str, user=Depends(get_current_user)):
+    if user["role"] not in ("distributor", "super_admin", "sales_manager"):
+        raise HTTPException(403, "Not permitted")
+    c = await db.scheme_claims.find_one({"id": claim_id})
+    if not c:
+        raise HTTPException(404, "Claim not found")
+    if user["role"] == "distributor" and c.get("distributor_id") != user["id"]:
+        raise HTTPException(403, "Not permitted")
+    if c.get("status") == "Fulfilled":
+        raise HTTPException(400, "Claim already fulfilled")
+    await db.scheme_claims.update_one(
+        {"id": claim_id},
+        {"$set": {"status": "Fulfilled", "fulfilled_by": user.get("name"), "fulfilled_at": now_utc()}},
+    )
+    return await db.scheme_claims.find_one({"id": claim_id}, {"_id": 0})
+
+
+# ----- Admin: Attendance Report -----
+@api_router.get("/admin/attendance-report")
+async def admin_attendance_report(user=Depends(get_current_user), month: Optional[str] = None):
+    require_admin(user)
+    if not month:
+        month = datetime.now(IST).strftime("%Y-%m")
+    try:
+        y, m = int(month[:4]), int(month[5:7])
+        days_in_month = calendar.monthrange(y, m)[1]
+    except (ValueError, IndexError):
+        raise HTTPException(400, "Month must be in YYYY-MM format")
+    docs = await db.attendance.find({"date": {"$regex": f"^{month}"}}, {"_id": 0}).to_list(3000)
+    by_sp: dict = {}
+    for d in docs:
+        day = int(d["date"].split("-")[2])
+        by_sp.setdefault(d["salesperson_id"], {})[str(day)] = {
+            "date": d["date"],
+            "start_time": _aware_dt(d.get("start_time")).isoformat() if d.get("start_time") else None,
+            "end_time": _aware_dt(d.get("end_time")).isoformat() if d.get("end_time") else None,
+            "duration_minutes": d.get("duration_minutes"),
+            "start_lat": d.get("start_lat"),
+            "start_lng": d.get("start_lng"),
+            "end_lat": d.get("end_lat"),
+            "end_lng": d.get("end_lng"),
+        }
+    sps = await db.users.find(
+        {"role": "salesperson"}, {"_id": 0, "id": 1, "name": 1, "employee_id": 1, "territory": 1}
+    ).sort("employee_id", 1).to_list(200)
+    rows = [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "employee_id": s["employee_id"],
+            "territory": s.get("territory", ""),
+            "days": by_sp.get(s["id"], {}),
+        }
+        for s in sps
+    ]
+    return {"month": month, "days_in_month": days_in_month, "rows": rows}
 
 
 @api_router.get("/")

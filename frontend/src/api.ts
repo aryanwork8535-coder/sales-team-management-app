@@ -69,6 +69,16 @@ export const api = {
   adminUsers: () => apiFetch('/admin/users'),
   adminCreateUser: (data: any) => apiFetch('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
   adminUpdateUser: (id: string, data: any) => apiFetch(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminTargets: () => apiFetch('/admin/targets'),
+  adminSetTarget: (data: any) => apiFetch('/admin/targets', { method: 'POST', body: JSON.stringify(data) }),
+  adminAttendanceReport: (month?: string) => apiFetch(`/admin/attendance-report${month ? `?month=${month}` : ''}`),
+  // Performance
+  performance: () => apiFetch('/performance'),
+  // Distributor
+  distributorDashboard: () => apiFetch('/distributor/dashboard'),
+  schemeClaims: (status?: string) => apiFetch(`/scheme-claims${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  fulfilClaim: (id: string) => apiFetch(`/scheme-claims/${id}/fulfil`, { method: 'PUT' }),
+  updateOrderStatus: (id: string, status: string) => apiFetch(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
 };
 
 export function isNetworkError(e: any): boolean {

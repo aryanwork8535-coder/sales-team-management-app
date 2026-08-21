@@ -190,3 +190,53 @@ frontend:
 agent_communication:
   - agent: "main"
     message: "Iteration 2 complete. Added Admin Web Panel (role-based routing on login: EMP001/EMP002 land on /admin desktop layout), Attendance (start/end day GPS), Expenses with bill photo upload + admin approval, Complaints with photos + admin resolution, Offline queue for orders/visits with client_id idempotency. Smoke tested: admin dashboard renders at 1440px, mobile attendance screen works. Iteration 1 tests (16/16 backend, 5/5 frontend) previously passed — regression check core salesperson flow briefly."
+
+## Iteration 3 — Targets, Performance, Distributor View, Attendance Report
+
+backend:
+  - task: "Admin targets (GET /api/admin/targets, POST /api/admin/targets upsert daily/monthly)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Salesperson performance API (GET /api/performance: rank, leaderboard, 6-month trend, target achievement)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Distributor endpoints (GET /api/distributor/dashboard, GET /api/scheme-claims, PUT /api/scheme-claims/{id}/fulfil, PUT /api/orders/{id}/status)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Admin attendance report (GET /api/admin/attendance-report?month=YYYY-MM)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+
+frontend:
+  - task: "Admin Targets page (edit daily/monthly targets per salesperson)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/targets.tsx"
+    needs_retesting: true
+  - task: "Admin Attendance Report grid (month nav, day cells, GPS detail modal)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/attendance.tsx"
+    needs_retesting: true
+  - task: "Mobile Performance screen (rank hero, leaderboard, progress bars, trend chart) via More tab"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/performance.tsx"
+    needs_retesting: true
+  - task: "Distributor view (login EMP004 -> /distributor, KPIs, orders dispatch/deliver, claims fulfil)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/distributor/index.tsx"
+    needs_retesting: true
+
+agent_communication:
+  - agent: "main"
+    message: "Iteration 3 complete. Added Target Management (admin), Performance screen (mobile), Distributor view (role-based route /distributor), Attendance Report grid (admin). Smoke tested: attendance grid renders with green cell for EMP003, distributor view shows 5 pending orders + 4 claims with action buttons. Cleaned leftover test users/products from DB."
