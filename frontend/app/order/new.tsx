@@ -57,7 +57,7 @@ export default function NewOrder() {
     const t = setTimeout(async () => {
       if (items.length === 0) { setSchemes([]); return; }
       try {
-        const s = await api.schemeCalc(items.map(i => ({ product_id: i.product.id, quantity: i.qty })));
+        const s = await api.schemeCalc(items.map(i => ({ product_id: i.product.id, quantity: i.qty })), retailer_id as string);
         setSchemes(s.schemes || []);
       } catch {}
     }, 400);

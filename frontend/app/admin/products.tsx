@@ -1,24 +1,33 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, Alert, Platform, Image } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { api } from '@/src/api';
 import { theme, fmtINR } from '@/src/theme';
-import { Card, TRow, Th, Td, StatusChip, AdminModal, Field, PrimaryBtn, GhostBtn } from '@/src/adminUi';
+import { Card, TRow, Th, Td, StatusChip, AdminModal, Field, SelectChips, PrimaryBtn, GhostBtn } from '@/src/adminUi';
+import { AuthImage } from '@/src/AuthImage';
+import { pickFromGallery } from '@/src/photoPicker';
+import { uploadImage } from '@/src/upload';
 
-const EMPTY_FORM = { brand: '', name: '', category: '', pack_size: '', sku_code: '', mrp: '', distributor_rate: '', retailer_rate: '', salesperson_rate: '' };
+const EMPTY_FORM = { brand: '', name: '', category: '', pack_size: '', sku_code: '', mrp: '', distributor_rate: '', retailer_rate: '', salesperson_rate: '', gst: '18' };
 
 export default function AdminProducts() {
   const [products, setProducts] = useState<any[]>([]);
+  const [brands, setBrands] = useState<string[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState<any>(EMPTY_FORM);
+  const [image, setImage] = useState<string | null>(null);
+  const [imageUri, setImageUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const d = await api.adminProducts();
+      const [d, b, s] = await Promise.all([api.adminProducts(), api.adminBrands(), api.settings()]);
       setProducts(d || []);
+      setBrands((b || []).filter((x: any) => x.active).map((x: any) => x.name));
+      setCategories(s?.product_categories || []);
     } catch {} finally {
       setLoading(false);
     }
@@ -28,7 +37,9 @@ export default function AdminProducts() {
 
   const openAdd = () => {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, brand: brands[0] || '', category: categories[0] || '' });
+    setImage(null);
+    setImageUri(null);
     setModal(true);
   };
 
@@ -38,7 +49,10 @@ export default function AdminProducts() {
       brand: p.brand, name: p.name, category: p.category || '', pack_size: p.pack_size || '',
       sku_code: p.sku_code || '', mrp: String(p.mrp), distributor_rate: String(p.distributor_rate),
       retailer_rate: String(p.retailer_rate), salesperson_rate: String(p.salesperson_rate),
+      gst: String(p.gst ?? 18),
     });
+    setImage(p.image || null);
+    setImageUri(null);
     setModal(true);
   };
 
@@ -54,6 +68,8 @@ export default function AdminProducts() {
     }
     setBusy(true);
     try {
+      let imagePath = image;
+      if (imageUri) imagePath = await uploadImage(imageUri);
       const payload = {
         brand: form.brand.trim().toUpperCase(),
         name: form.name.trim(),
@@ -64,10 +80,13 @@ export default function AdminProducts() {
         distributor_rate: parseFloat(form.distributor_rate) || 0,
         retailer_rate: parseFloat(form.retailer_rate) || 0,
         salesperson_rate: parseFloat(form.salesperson_rate) || 0,
+        gst: parseFloat(form.gst) || 0,
+        image: imagePath,
       };
       if (editing) await api.adminUpdateProduct(editing.id, payload);
       else await api.adminCreateProduct(payload);
       setModal(false);
+      notify('Success', editing ? 'Product updated' : 'Product created');
       load();
     } catch (e: any) {
       notify('Error', e.message);
@@ -136,10 +155,8 @@ export default function AdminProducts() {
       )}
 
       <AdminModal visible={modal} title={editing ? 'Edit Product' : 'Add Product'} onClose={() => setModal(false)}>
-        <View style={styles.formRow}>
-          <View style={{ flex: 1 }}><Field testID="product-brand" label="Brand *" value={form.brand} onChangeText={set('brand')} placeholder="DHAMAL" /></View>
-          <View style={{ flex: 1 }}><Field testID="product-category" label="Category" value={form.category} onChangeText={set('category')} placeholder="Detergent Powder" /></View>
-        </View>
+        <SelectChips label="Brand *" options={brands} value={form.brand} onChange={set('brand')} />
+        <SelectChips label="Category" options={categories} value={form.category} onChange={set('category')} />
         <Field testID="product-name" label="Product Name *" value={form.name} onChangeText={set('name')} placeholder="DHAMAL Detergent Powder" />
         <View style={styles.formRow}>
           <View style={{ flex: 1 }}><Field testID="product-pack" label="Pack Size" value={form.pack_size} onChangeText={set('pack_size')} placeholder="1kg" /></View>
@@ -147,11 +164,22 @@ export default function AdminProducts() {
         </View>
         <View style={styles.formRow}>
           <View style={{ flex: 1 }}><Field testID="product-mrp" label="MRP (₹) *" value={form.mrp} onChangeText={set('mrp')} keyboardType="numeric" placeholder="105" /></View>
-          <View style={{ flex: 1 }}><Field testID="product-dist-rate" label="Distributor Rate" value={form.distributor_rate} onChangeText={set('distributor_rate')} keyboardType="numeric" placeholder="80" /></View>
+          <View style={{ flex: 1 }}><Field testID="product-gst" label="GST %" value={form.gst} onChangeText={set('gst')} keyboardType="numeric" placeholder="18" /></View>
         </View>
         <View style={styles.formRow}>
+          <View style={{ flex: 1 }}><Field testID="product-dist-rate" label="Distributor Rate" value={form.distributor_rate} onChangeText={set('distributor_rate')} keyboardType="numeric" placeholder="80" /></View>
           <View style={{ flex: 1 }}><Field testID="product-retailer-rate" label="Retailer Rate" value={form.retailer_rate} onChangeText={set('retailer_rate')} keyboardType="numeric" placeholder="88" /></View>
           <View style={{ flex: 1 }}><Field testID="product-sp-rate" label="Salesperson Rate" value={form.salesperson_rate} onChangeText={set('salesperson_rate')} keyboardType="numeric" placeholder="92" /></View>
+        </View>
+        <Text style={styles.imgLabel}>Product Image</Text>
+        <View style={styles.imgRow}>
+          {imageUri ? <Image source={{ uri: imageUri }} style={styles.imgPreview} /> : image ? <AuthImage path={image} style={styles.imgPreview} /> : (
+            <View style={[styles.imgPreview, styles.imgPh]}>
+              <MaterialCommunityIcons name="image-outline" size={22} color={theme.colors.muted} />
+            </View>
+          )}
+          <GhostBtn testID="pick-product-image" small label="Choose Image" onPress={async () => { const u = await pickFromGallery(); if (u) setImageUri(u); }} />
+          {(image || imageUri) ? <GhostBtn small label="Remove" onPress={() => { setImage(null); setImageUri(null); }} /> : null}
         </View>
         <View style={styles.modalBtns}>
           <GhostBtn label="Cancel" onPress={() => setModal(false)} />
@@ -170,5 +198,9 @@ const styles = StyleSheet.create({
   pageSub: { fontSize: 13, color: theme.colors.muted, marginTop: 2 },
   iconAction: { width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surfaceTertiary, alignItems: 'center', justifyContent: 'center' },
   formRow: { flexDirection: 'row', gap: 12 },
+  imgLabel: { fontSize: 12, fontWeight: '700', color: theme.colors.muted, marginBottom: 8 },
+  imgRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  imgPreview: { width: 56, height: 56, borderRadius: 10 },
+  imgPh: { backgroundColor: theme.colors.surfaceTertiary, alignItems: 'center', justifyContent: 'center' },
   modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 6 },
 });

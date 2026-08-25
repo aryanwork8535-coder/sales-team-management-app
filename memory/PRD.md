@@ -51,6 +51,11 @@ A production-oriented FMCG Sales Force Management mobile app (Expo/React Native)
 - JWT secret rotated to 64-hex; server refuses to boot with a secret <32 bytes; regex injection fixed (re.escape on search, validated month regex).
 - KNOWN ACCEPTED RISKS (preview): seeded demo credentials retained for testing — MUST be rotated via Admin → Users before production launch; CORS `*` (bearer tokens, no cookies); 30-day token expiry; in-memory limiter is per-process.
 
+## Master Data — fully database-driven (Iteration 5)
+- Admin CRUD (all `require_admin`, salesperson 403): **Products** (details, prices, GST, image, active), **Brands** (logo, rename cascades to products/schemes), **Retailers** (search + full edit incl. salesperson/distributor/territory assignment, status), **Users** (manager for salespersons, assigned salespersons for distributors, territory), **Territories** (district, rename cascades to users/retailers/beats), **Beats** (salesperson/day/territory/route/retailer multi-select, active flag respected by mobile dashboard), **Schemes** (slabs+gifts, start/end dates, territory & distributor scoping — order eligibility auto-applied at booking & respects active/date/scope), **Targets** (salesperson/distributor/territory × daily/monthly), **Settings** (company details + product categories, no-order reasons, complaint types, expense categories).
+- Mobile reads all lists from `GET /api/settings` (expense categories, complaint types, no-order reasons in the new visit-outcome sheet) — changes propagate immediately, nothing hard-coded.
+- Startup `migrate_master_data()` (idempotent): seeds brands from product brands, territories from user/beat strings, default settings — never touches existing records.
+
 ## Deferred (future iterations)
 Advanced reports/exports, notifications, beat plan management from admin, retailer credit-limit enforcement.
 

@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Linking, Alert } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Linking, Alert, Modal } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,6 +20,16 @@ export default function RetailerDetail() {
   const [loading, setLoading] = useState(true);
   const [activeVisit, setActiveVisit] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [completeSheet, setCompleteSheet] = useState(false);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [noOrderReason, setNoOrderReason] = useState<string | null>(null);
+  const [reasons, setReasons] = useState<string[]>(['Stock Available', 'Shop Closed', 'Owner Not Present', 'Other']);
+
+  useEffect(() => {
+    api.settings().then((s: any) => {
+      if (s?.no_order_reasons?.length) setReasons(s.no_order_reasons);
+    }).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -65,7 +75,7 @@ export default function RetailerDetail() {
     }
   };
 
-  const completeVisit = async (result: string) => {
+  const completeVisit = async (result: string, reason?: string) => {
     if (!activeVisit) return;
     setBusy(true);
     try {
@@ -74,9 +84,7 @@ export default function RetailerDetail() {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         lat = pos.coords.latitude; lng = pos.coords.longitude;
       } catch {}
-      let reason: string | undefined;
-      if (result === 'NO_ORDER') reason = 'Stock Available';
-      const payload = { visit_id: activeVisit.id, latitude: lat, longitude: lng, result, no_order_reason: reason, client_time: new Date().toISOString() };
+      const payload = { visit_id: activeVisit.id, latitude: lat, longitude: lng, result, no_order_reason: result === 'NO_ORDER' ? reason : undefined, client_time: new Date().toISOString() };
       try {
         if (activeVisit.offline) {
           // start is still queued — queue the completion too, backend will process in order
@@ -158,11 +166,62 @@ export default function RetailerDetail() {
                 <Text style={styles.actionPrimaryText}>START VISIT</Text>
               </Pressable>
             ) : (
-              <Pressable testID="complete-visit-btn" style={[styles.actionPrimary, { backgroundColor: theme.colors.success }]} disabled={busy} onPress={() => completeVisit('OTHER')}>
+              <Pressable testID="complete-visit-btn" style={[styles.actionPrimary, { backgroundColor: theme.colors.success }]} disabled={busy} onPress={() => { setOutcome(null); setNoOrderReason(null); setCompleteSheet(true); }}>
                 <MaterialCommunityIcons name="check-circle-outline" size={22} color="#fff" />
                 <Text style={styles.actionPrimaryText}>COMPLETE VISIT</Text>
               </Pressable>
             )}
+            <Modal visible={completeSheet} transparent animationType="fade" onRequestClose={() => setCompleteSheet(false)}>
+              <View style={styles.sheetOverlay}>
+                <View style={styles.sheetBox}>
+                  <Text style={styles.sheetTitle}>Visit Outcome</Text>
+                  {[
+                    { key: 'ORDER_BOOKED', label: 'Order Booked', icon: 'cart-check' },
+                    { key: 'NO_ORDER', label: 'No Order', icon: 'cart-off' },
+                    { key: 'PAYMENT_COLLECTED', label: 'Payment Collected', icon: 'hand-coin-outline' },
+                    { key: 'OTHER', label: 'Other', icon: 'dots-horizontal-circle-outline' },
+                  ].map((o) => (
+                    <Pressable
+                      key={o.key}
+                      testID={`outcome-${o.key}`}
+                      style={[styles.sheetOption, outcome === o.key && styles.sheetOptionActive]}
+                      onPress={() => setOutcome(o.key)}
+                    >
+                      <MaterialCommunityIcons name={o.icon as any} size={20} color={outcome === o.key ? '#fff' : theme.colors.brand} />
+                      <Text style={[styles.sheetOptionText, outcome === o.key && { color: '#fff' }]}>{o.label}</Text>
+                    </Pressable>
+                  ))}
+                  {outcome === 'NO_ORDER' ? (
+                    <>
+                      <Text style={styles.sheetSub}>Reason</Text>
+                      <View style={styles.reasonWrap}>
+                        {reasons.map((r) => (
+                          <Pressable key={r} testID={`reason-${r}`} style={[styles.reasonChip, noOrderReason === r && styles.reasonChipActive]} onPress={() => setNoOrderReason(r)}>
+                            <Text style={[styles.reasonText, noOrderReason === r && { color: '#fff' }]}>{r}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </>
+                  ) : null}
+                  <View style={styles.sheetBtns}>
+                    <Pressable testID="cancel-complete" style={styles.sheetCancel} onPress={() => setCompleteSheet(false)}>
+                      <Text style={styles.sheetCancelText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      testID="confirm-complete"
+                      style={[styles.sheetConfirm, (!outcome || (outcome === 'NO_ORDER' && !noOrderReason) || busy) && { opacity: 0.5 }]}
+                      disabled={!outcome || (outcome === 'NO_ORDER' && !noOrderReason) || busy}
+                      onPress={async () => {
+                        setCompleteSheet(false);
+                        await completeVisit(outcome as string, noOrderReason || undefined);
+                      }}
+                    >
+                      {busy ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.sheetConfirmText}>Confirm</Text>}
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            </Modal>
             <View style={styles.actionRow}>
               <Pressable testID="place-order-btn" style={styles.action} onPress={() => router.push(`/order/new?retailer_id=${id}`)}>
                 <MaterialCommunityIcons name="cart-plus" size={20} color={theme.colors.brand} />
@@ -269,4 +328,20 @@ const styles = StyleSheet.create({
   orderDate: { fontSize: 11, color: theme.colors.muted, marginTop: 2 },
   orderAmt: { fontSize: 14, fontWeight: '700', color: theme.colors.onSurface },
   emptyText: { fontSize: 12, color: theme.colors.muted, textAlign: 'center', padding: 12 },
+  sheetOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  sheetBox: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 34 },
+  sheetTitle: { fontSize: 17, fontWeight: '700', color: theme.colors.onSurface, marginBottom: 14 },
+  sheetOption: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceSecondary, marginBottom: 8, minHeight: 50 },
+  sheetOptionActive: { backgroundColor: theme.colors.brand, borderColor: theme.colors.brand },
+  sheetOptionText: { fontSize: 14, fontWeight: '600', color: theme.colors.onSurface },
+  sheetSub: { fontSize: 12, fontWeight: '700', color: theme.colors.muted, marginTop: 8, marginBottom: 8 },
+  reasonWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  reasonChip: { paddingHorizontal: 12, height: 36, justifyContent: 'center', borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceSecondary },
+  reasonChipActive: { backgroundColor: theme.colors.warning, borderColor: theme.colors.warning },
+  reasonText: { fontSize: 12, fontWeight: '600', color: theme.colors.onSurface },
+  sheetBtns: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  sheetCancel: { flex: 1, minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
+  sheetCancelText: { fontSize: 14, fontWeight: '700', color: theme.colors.onSurface },
+  sheetConfirm: { flex: 1, minHeight: 48, borderRadius: 12, backgroundColor: theme.colors.success, alignItems: 'center', justifyContent: 'center' },
+  sheetConfirmText: { fontSize: 14, fontWeight: '700', color: '#fff' },
 });

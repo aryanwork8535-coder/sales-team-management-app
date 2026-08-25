@@ -283,3 +283,108 @@ backend:
 agent_communication:
   - agent: "main"
     message: "Security audit fixes applied. JWT secret rotated (all old tokens invalid — clients must re-login; frontend handles 401 by clearing token). In-memory brute-force limiter is per-process; restarting backend clears blocks. NOTE for testing: 5 failed logins for the same employee_id OR same client IP within 60s triggers a 5-minute 429 block — space out negative login tests or restart backend between them to reset. Demo credentials retained intentionally for preview (user will rotate via admin Users page before production)."
+
+## Iteration 5 — Master Data CRUD (fully database-driven admin panel)
+
+backend:
+  - task: "Brands CRUD (/api/admin/brands GET/POST/PUT; rename cascades to products+schemes; /api/brands reads brands collection)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Territories CRUD (/api/admin/territories; rename cascades to users/retailers/beats; counts included)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Retailer admin edit (PUT /api/admin/retailers/{id}: full fields, mobile dup check, status validation)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Beats CRUD (/api/admin/beats; duplicate sp+day prevented; active flag respected by mobile dashboard beat)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Schemes CRUD (/api/admin/schemes with slabs, dates, territory, distributor; order eligibility respects active+date range+territory+distributor)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Targets extended (entity_type salesperson|distributor|territory; GET returns 3 lists; legacy salesperson docs unchanged)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Settings (GET /api/settings any-auth; PUT /api/admin/settings; company + 4 master lists; defaults migrated at startup)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+  - task: "Users extended (manager_id for salespersons, assigned_salesperson_ids for distributors); products gained image field"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    needs_retesting: true
+
+frontend:
+  - task: "Admin nav expanded to 14 items (Retailers, Brands, Schemes, Beats, Territories, Settings added)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/_layout.tsx"
+    needs_retesting: true
+  - task: "Admin Retailers page (debounced search, status filter, full edit modal with sp/dist/territory assignment)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/retailers.tsx"
+    needs_retesting: true
+  - task: "Admin Brands page (add/edit/logo upload/toggle with confirm)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/brands.tsx"
+    needs_retesting: true
+  - task: "Admin Territories page (add/edit/toggle, counts)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/territories.tsx"
+    needs_retesting: true
+  - task: "Admin Beats page (create/edit beat: sp, day, territory, route, retailer multi-select, toggle)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/beats.tsx"
+    needs_retesting: true
+  - task: "Admin Schemes page (create/edit with slab editor, dates, territory/distributor scoping, toggle)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/schemes.tsx"
+    needs_retesting: true
+  - task: "Admin Targets tabs (Salespersons/Distributors/Territories)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/targets.tsx"
+    needs_retesting: true
+  - task: "Admin Settings page (company details + 4 editable master lists with add/remove chips)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/settings.tsx"
+    needs_retesting: true
+  - task: "Products upgraded (brand/category DB-driven chips, GST field, product image upload)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/products.tsx"
+    needs_retesting: true
+  - task: "Users upgraded (territory chips, manager select for salesperson, assigned salespersons for distributor)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/admin/users.tsx"
+    needs_retesting: true
+  - task: "Mobile: expense categories + complaint types + no-order reasons now loaded from /api/settings; visit completion outcome sheet with reason picker"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/expense/new.tsx, /app/frontend/app/complaint/new.tsx, /app/frontend/app/retailer/[id].tsx"
+    needs_retesting: true
+
+agent_communication:
+  - agent: "main"
+    message: "Iteration 5: full master-data CRUD. Startup migration seeded brands (from product brands), territories (from user/beat territory strings) and default settings WITHOUT touching existing records. All admin endpoints require_admin (salesperson gets 403). Mobile screens read categories/reasons/types from /api/settings with hardcoded fallbacks only while loading. Visit completion now uses an outcome bottom sheet (ORDER_BOOKED/NO_ORDER+reason/PAYMENT_COLLECTED/OTHER). Brute-force limiter still active: avoid 5+ failed logins per minute or restart backend."

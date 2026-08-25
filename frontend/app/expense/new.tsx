@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -8,16 +8,26 @@ import { theme } from '@/src/theme';
 import { takePhoto, pickFromGallery } from '@/src/photoPicker';
 import { uploadImage } from '@/src/upload';
 
-const CATEGORIES = ['Travel', 'Fuel', 'Food', 'Lodging', 'Other'];
+const DEFAULT_CATEGORIES = ['Travel', 'Fuel', 'Food', 'Lodging', 'Other'];
 
 export default function NewExpense() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
   const [category, setCategory] = useState('Travel');
   const [amount, setAmount] = useState('');
   const [remarks, setRemarks] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.settings().then((s: any) => {
+      if (s?.expense_categories?.length) {
+        setCategories(s.expense_categories);
+        setCategory((c) => (s.expense_categories.includes(c) ? c : s.expense_categories[0]));
+      }
+    }).catch(() => {});
+  }, []);
 
   const submit = async () => {
     const amt = parseFloat(amount);
@@ -49,7 +59,7 @@ export default function NewExpense() {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <Text style={styles.label}>Category</Text>
         <View style={styles.chips}>
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <Pressable key={c} testID={`category-${c}`} style={[styles.chip, category === c && styles.chipActive]} onPress={() => setCategory(c)}>
               <Text style={[styles.chipText, category === c && styles.chipTextActive]}>{c}</Text>
             </Pressable>

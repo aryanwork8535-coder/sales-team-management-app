@@ -47,7 +47,7 @@ export const api = {
   order: (id: string) => apiFetch(`/orders/${id}`),
   createCollection: (data: any) => apiFetch('/collections', { method: 'POST', body: JSON.stringify(data) }),
   collections: (retailer_id?: string) => apiFetch(`/collections${retailer_id ? `?retailer_id=${retailer_id}` : ''}`),
-  schemeCalc: (items: any) => apiFetch('/schemes/calculate', { method: 'POST', body: JSON.stringify({ items }) }),
+  schemeCalc: (items: any, retailer_id?: string) => apiFetch('/schemes/calculate', { method: 'POST', body: JSON.stringify({ items, retailer_id }) }),
   // Attendance
   attendanceToday: () => apiFetch('/attendance/today'),
   attendanceStart: (data: any) => apiFetch('/attendance/start', { method: 'POST', body: JSON.stringify(data) }),
@@ -79,6 +79,22 @@ export const api = {
   schemeClaims: (status?: string) => apiFetch(`/scheme-claims${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   fulfilClaim: (id: string) => apiFetch(`/scheme-claims/${id}/fulfil`, { method: 'PUT' }),
   updateOrderStatus: (id: string, status: string) => apiFetch(`/orders/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  // Settings & Master Data
+  settings: () => apiFetch('/settings'),
+  adminUpdateSettings: (data: any) => apiFetch('/admin/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  adminBrands: () => apiFetch('/admin/brands'),
+  adminCreateBrand: (data: any) => apiFetch('/admin/brands', { method: 'POST', body: JSON.stringify(data) }),
+  adminUpdateBrand: (id: string, data: any) => apiFetch(`/admin/brands/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminTerritories: () => apiFetch('/admin/territories'),
+  adminCreateTerritory: (data: any) => apiFetch('/admin/territories', { method: 'POST', body: JSON.stringify(data) }),
+  adminUpdateTerritory: (id: string, data: any) => apiFetch(`/admin/territories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminUpdateRetailer: (id: string, data: any) => apiFetch(`/admin/retailers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminBeats: () => apiFetch('/admin/beats'),
+  adminCreateBeat: (data: any) => apiFetch('/admin/beats', { method: 'POST', body: JSON.stringify(data) }),
+  adminUpdateBeat: (id: string, data: any) => apiFetch(`/admin/beats/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adminSchemes: () => apiFetch('/admin/schemes'),
+  adminCreateScheme: (data: any) => apiFetch('/admin/schemes', { method: 'POST', body: JSON.stringify(data) }),
+  adminUpdateScheme: (id: string, data: any) => apiFetch(`/admin/schemes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 };
 
 export function isNetworkError(e: any): boolean {

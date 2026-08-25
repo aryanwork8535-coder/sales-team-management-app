@@ -281,7 +281,7 @@ async def salesperson_dashboard(user=Depends(get_current_user)):
 
     # Today's beat
     weekday_name = datetime.now(timezone.utc).strftime("%A")
-    beat = await db.beats.find_one({"salesperson_id": sp_id, "day": weekday_name}, {"_id": 0})
+    beat = await db.beats.find_one({"salesperson_id": sp_id, "day": weekday_name, "active": {"$ne": False}}, {"_id": 0})
     beat_retailers = []
     if beat:
         rids = beat.get("retailer_ids", [])
@@ -407,8 +407,10 @@ async def list_products(user=Depends(get_current_user), brand: Optional[str] = N
 
 @api_router.get("/brands")
 async def list_brands(user=Depends(get_current_user)):
-    brands = await db.products.distinct("brand", {"active": True})
-    return brands
+    docs = await db.brands.find({"active": True}, {"_id": 0, "name": 1}).sort("name", 1).to_list(200)
+    if docs:
+        return [d["name"] for d in docs]
+    return await db.products.distinct("brand", {"active": True})
 
 
 # ---------- Visits ----------
@@ -487,23 +489,54 @@ async def list_visits(user=Depends(get_current_user), retailer_id: Optional[str]
 
 
 # ---------- Schemes ----------
-async def calculate_scheme(brand: str, total_qty_for_brand: int):
-    scheme = await db.schemes.find_one({"brand": brand, "active": True}, {"_id": 0})
-    if not scheme:
+def _as_dt(v):
+    """Normalize stored date (datetime or 'YYYY-MM-DD' string) to aware datetime, else None."""
+    if not v:
         return None
-    eligible = None
-    for slab in sorted(scheme.get("slabs", []), key=lambda s: s["min_qty"]):
-        if total_qty_for_brand >= slab["min_qty"]:
-            eligible = slab
-    if eligible:
-        return {"scheme_name": scheme["name"], "brand": brand, "slab": eligible, "qty": total_qty_for_brand}
+    if isinstance(v, str):
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00")).replace(tzinfo=timezone.utc) if len(v) <= 10 else datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if v.tzinfo is None:
+        return v.replace(tzinfo=timezone.utc)
+    return v
+
+
+async def calculate_scheme(brand: str, total_qty_for_brand: int, retailer: Optional[dict] = None):
+    now = now_utc()
+    schemes = await db.schemes.find({"brand": brand, "active": True}, {"_id": 0}).to_list(50)
+    for scheme in schemes:
+        sd = _as_dt(scheme.get("start_date"))
+        ed = _as_dt(scheme.get("end_date"))
+        if sd and sd > now:
+            continue
+        if ed and ed < now:
+            continue
+        if retailer:
+            t = scheme.get("territory")
+            if t and retailer.get("territory") != t:
+                continue
+            d = scheme.get("distributor_id")
+            if d and retailer.get("distributor_id") != d:
+                continue
+        eligible = None
+        for slab in sorted(scheme.get("slabs", []), key=lambda s: s["min_qty"]):
+            if total_qty_for_brand >= slab["min_qty"]:
+                eligible = slab
+        if eligible:
+            return {"scheme_name": scheme["name"], "brand": brand, "slab": eligible, "qty": total_qty_for_brand}
     return None
 
 
 @api_router.post("/schemes/calculate")
 async def scheme_calc(payload: dict, user=Depends(get_current_user)):
-    # payload = {"items":[{product_id, quantity}]}
+    # payload = {"items":[{product_id, quantity}], "retailer_id": optional}
     items = payload.get("items", [])
+    retailer = None
+    rid = payload.get("retailer_id")
+    if rid:
+        retailer = await db.retailers.find_one({"id": rid}, {"_id": 0})
     brand_totals: dict = {}
     for it in items:
         p = await db.products.find_one({"id": it["product_id"]}, {"_id": 0})
@@ -512,7 +545,7 @@ async def scheme_calc(payload: dict, user=Depends(get_current_user)):
         brand_totals[p["brand"]] = brand_totals.get(p["brand"], 0) + int(it.get("quantity", 0))
     results = []
     for brand, qty in brand_totals.items():
-        s = await calculate_scheme(brand, qty)
+        s = await calculate_scheme(brand, qty, retailer)
         if s:
             results.append(s)
     return {"schemes": results}
@@ -559,7 +592,7 @@ async def create_order(req: OrderCreate, user=Depends(get_current_user)):
 
     schemes = []
     for brand, qty in brand_qty.items():
-        s = await calculate_scheme(brand, qty)
+        s = await calculate_scheme(brand, qty, retailer)
         if s:
             schemes.append(s)
 
@@ -958,6 +991,7 @@ class ProductCreate(BaseModel):
     retailer_rate: float = 0
     salesperson_rate: float = 0
     gst: float = 18
+    image: Optional[str] = None
     active: bool = True
 
 
@@ -972,6 +1006,7 @@ class ProductUpdate(BaseModel):
     retailer_rate: Optional[float] = None
     salesperson_rate: Optional[float] = None
     gst: Optional[float] = None
+    image: Optional[str] = None
     active: Optional[bool] = None
 
 
@@ -981,6 +1016,8 @@ class UserCreate(BaseModel):
     role: str  # super_admin | sales_manager | salesperson | distributor
     mobile: Optional[str] = ""
     territory: Optional[str] = ""
+    manager_id: Optional[str] = None
+    assigned_salesperson_ids: Optional[List[str]] = None
     password: str
 
 
@@ -989,6 +1026,8 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     mobile: Optional[str] = None
     territory: Optional[str] = None
+    manager_id: Optional[str] = None
+    assigned_salesperson_ids: Optional[List[str]] = None
     password: Optional[str] = None
     active: Optional[bool] = None
 
@@ -1173,7 +1212,7 @@ async def admin_overview(user=Depends(get_current_user), range: str = "30d"):
     total_outstanding = round(out_agg[0]["t"], 2) if out_agg else 0
 
     # Salesperson summary
-    sps = await db.users.find({"role": "salesperson"}, {"_id": 0, "password_hash": 0}).to_list(200)
+    sps = await db.users.find({"role": "salesperson", "active": {"$ne": False}}, {"_id": 0, "password_hash": 0}).to_list(200)
     sp_stats = {s["id"]: {"sales": 0.0, "orders": 0, "collection": 0.0, "visits": 0} for s in sps}
     for o in orders:
         st = sp_stats.get(o.get("salesperson_id"))
@@ -1297,6 +1336,8 @@ async def admin_create_user(req: UserCreate, user=Depends(get_current_user)):
         "role": req.role,
         "mobile": req.mobile,
         "territory": req.territory,
+        "manager_id": req.manager_id,
+        "assigned_salesperson_ids": req.assigned_salesperson_ids or [],
         "password_hash": hash_password(req.password),
         "active": True,
         "created_at": now_utc(),
@@ -1328,31 +1369,60 @@ async def admin_update_user(user_id: str, req: UserUpdate, user=Depends(get_curr
 
 # ----- Admin: Targets -----
 class TargetSet(BaseModel):
-    salesperson_id: str
+    entity_type: str = "salesperson"  # salesperson | distributor | territory
+    salesperson_id: Optional[str] = None  # legacy alias for entity_id
+    entity_id: Optional[str] = None  # user id, or territory name for territory targets
     period: str  # daily | monthly
     value: float
+
+
+def _target_pair(tmap: dict, key: str):
+    t = tmap.get(key, {})
+    return t.get("daily", 0), t.get("monthly", 0)
 
 
 @api_router.get("/admin/targets")
 async def admin_targets(user=Depends(get_current_user)):
     require_admin(user)
-    sps = await db.users.find({"role": "salesperson"}, {"_id": 0, "password_hash": 0}).sort("employee_id", 1).to_list(200)
-    targets = await db.targets.find({"active": True}, {"_id": 0}).to_list(1000)
-    tmap: dict = {}
+    targets = await db.targets.find({"active": True}, {"_id": 0}).to_list(2000)
+    sp_map: dict = {}
+    other_map: dict = {}
     for t in targets:
-        tmap.setdefault(t["salesperson_id"], {})[t["period"]] = t["value"]
-    return [
-        {
-            "id": s["id"],
-            "name": s["name"],
-            "employee_id": s["employee_id"],
-            "territory": s.get("territory", ""),
-            "active": s.get("active", True),
-            "daily_target": tmap.get(s["id"], {}).get("daily", 0),
-            "monthly_target": tmap.get(s["id"], {}).get("monthly", 0),
-        }
-        for s in sps
-    ]
+        if t.get("salesperson_id"):
+            sp_map.setdefault(t["salesperson_id"], {})[t["period"]] = t["value"]
+        elif t.get("entity_type") and t.get("entity_id"):
+            other_map.setdefault(f"{t['entity_type']}:{t['entity_id']}", {})[t["period"]] = t["value"]
+
+    sps = await db.users.find({"role": "salesperson"}, {"_id": 0, "password_hash": 0}).sort("employee_id", 1).to_list(200)
+    salespersons = []
+    for s in sps:
+        d, m = _target_pair(sp_map, s["id"])
+        salespersons.append({
+            "id": s["id"], "name": s["name"], "employee_id": s["employee_id"],
+            "territory": s.get("territory", ""), "active": s.get("active", True),
+            "daily_target": d, "monthly_target": m,
+        })
+
+    dists = await db.users.find({"role": "distributor"}, {"_id": 0, "password_hash": 0}).sort("employee_id", 1).to_list(200)
+    distributors = []
+    for s in dists:
+        d, m = _target_pair(other_map, f"distributor:{s['id']}")
+        distributors.append({
+            "id": s["id"], "name": s["name"], "employee_id": s["employee_id"],
+            "territory": s.get("territory", ""), "active": s.get("active", True),
+            "daily_target": d, "monthly_target": m,
+        })
+
+    terrs = await db.territories.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+    territories = []
+    for t in terrs:
+        d, m = _target_pair(other_map, f"territory:{t['name']}")
+        territories.append({
+            "id": t["id"], "name": t["name"], "district": t.get("district", ""),
+            "active": t.get("active", True), "daily_target": d, "monthly_target": m,
+        })
+
+    return {"salespersons": salespersons, "distributors": distributors, "territories": territories}
 
 
 @api_router.post("/admin/targets")
@@ -1362,23 +1432,43 @@ async def admin_set_target(req: TargetSet, user=Depends(get_current_user)):
         raise HTTPException(400, "Period must be daily or monthly")
     if req.value < 0:
         raise HTTPException(400, "Target must be zero or more")
-    sp = await db.users.find_one({"id": req.salesperson_id, "role": "salesperson"})
-    if not sp:
-        raise HTTPException(404, "Salesperson not found")
-    await db.targets.update_many(
-        {"salesperson_id": req.salesperson_id, "period": req.period, "active": True},
-        {"$set": {"active": False}},
-    )
-    doc = {
-        "id": str(uuid.uuid4()),
-        "salesperson_id": req.salesperson_id,
-        "period": req.period,
-        "metric": "sales_value",
-        "value": req.value,
-        "active": True,
-        "set_by": user["id"],
-        "created_at": now_utc(),
-    }
+    if req.entity_type not in ("salesperson", "distributor", "territory"):
+        raise HTTPException(400, "Invalid entity type")
+    eid = req.entity_id or req.salesperson_id
+    if not eid:
+        raise HTTPException(400, "entity_id required")
+
+    if req.entity_type == "salesperson":
+        sp = await db.users.find_one({"id": eid, "role": "salesperson"})
+        if not sp:
+            raise HTTPException(404, "Salesperson not found")
+        await db.targets.update_many(
+            {"salesperson_id": eid, "period": req.period, "active": True},
+            {"$set": {"active": False}},
+        )
+        doc = {
+            "id": str(uuid.uuid4()), "salesperson_id": eid, "period": req.period,
+            "metric": "sales_value", "value": req.value, "active": True,
+            "set_by": user["id"], "created_at": now_utc(),
+        }
+    else:
+        if req.entity_type == "distributor":
+            d = await db.users.find_one({"id": eid, "role": "distributor"})
+            if not d:
+                raise HTTPException(404, "Distributor not found")
+        else:
+            t = await db.territories.find_one({"name": eid})
+            if not t:
+                raise HTTPException(404, "Territory not found")
+        await db.targets.update_many(
+            {"entity_type": req.entity_type, "entity_id": eid, "period": req.period, "active": True},
+            {"$set": {"active": False}},
+        )
+        doc = {
+            "id": str(uuid.uuid4()), "entity_type": req.entity_type, "entity_id": eid,
+            "period": req.period, "metric": "sales_value", "value": req.value,
+            "active": True, "set_by": user["id"], "created_at": now_utc(),
+        }
     await db.targets.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -1585,6 +1675,420 @@ async def admin_attendance_report(user=Depends(get_current_user), month: Optiona
     return {"month": month, "days_in_month": days_in_month, "rows": rows}
 
 
+# ---------- Master Data (Admin CRUD) ----------
+class BrandUpsert(BaseModel):
+    name: str
+    logo: Optional[str] = None
+    active: bool = True
+
+
+class BrandUpdate(BaseModel):
+    name: Optional[str] = None
+    logo: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class TerritoryUpsert(BaseModel):
+    name: str
+    district: Optional[str] = ""
+    active: bool = True
+
+
+class TerritoryUpdate(BaseModel):
+    name: Optional[str] = None
+    district: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class RetailerAdminUpdate(BaseModel):
+    shop_name: Optional[str] = None
+    owner_name: Optional[str] = None
+    mobile: Optional[str] = None
+    address: Optional[str] = None
+    area: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    retailer_type: Optional[str] = None
+    potential: Optional[str] = None
+    classification: Optional[str] = None
+    territory: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    outstanding: Optional[float] = None
+    salesperson_id: Optional[str] = None
+    distributor_id: Optional[str] = None
+    status: Optional[str] = None
+
+
+class BeatUpsert(BaseModel):
+    salesperson_id: str
+    day: str
+    territory: Optional[str] = ""
+    retailer_ids: List[str] = []
+    route_name: Optional[str] = ""
+    active: bool = True
+
+
+class BeatUpdate(BaseModel):
+    salesperson_id: Optional[str] = None
+    day: Optional[str] = None
+    territory: Optional[str] = None
+    retailer_ids: Optional[List[str]] = None
+    route_name: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class SchemeSlabIn(BaseModel):
+    min_qty: int
+    article: str
+
+
+class SchemeUpsert(BaseModel):
+    name: str
+    brand: str
+    slabs: List[SchemeSlabIn]
+    start_date: Optional[str] = None  # YYYY-MM-DD
+    end_date: Optional[str] = None
+    territory: Optional[str] = None
+    distributor_id: Optional[str] = None
+    active: bool = True
+
+
+class SchemeUpdate(BaseModel):
+    name: Optional[str] = None
+    brand: Optional[str] = None
+    slabs: Optional[List[SchemeSlabIn]] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    territory: Optional[str] = None
+    distributor_id: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class SettingsUpdate(BaseModel):
+    company: Optional[dict] = None
+    product_categories: Optional[List[str]] = None
+    no_order_reasons: Optional[List[str]] = None
+    complaint_types: Optional[List[str]] = None
+    expense_categories: Optional[List[str]] = None
+
+
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _parse_date_str(v: Optional[str]):
+    if not v:
+        return None
+    try:
+        return datetime.strptime(v, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(400, "Dates must be in YYYY-MM-DD format")
+
+
+# ----- Brands -----
+@api_router.get("/admin/brands")
+async def admin_brands(user=Depends(get_current_user)):
+    require_admin(user)
+    return await db.brands.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+
+
+@api_router.post("/admin/brands")
+async def admin_create_brand(req: BrandUpsert, user=Depends(get_current_user)):
+    require_admin(user)
+    name = req.name.strip().upper()
+    if not name:
+        raise HTTPException(400, "Brand name is required")
+    if await db.brands.find_one({"name": name}):
+        raise HTTPException(400, f"Brand {name} already exists")
+    doc = {"id": str(uuid.uuid4()), "name": name, "logo": req.logo, "active": req.active,
+           "created_at": now_utc(), "updated_at": now_utc()}
+    await db.brands.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/admin/brands/{brand_id}")
+async def admin_update_brand(brand_id: str, req: BrandUpdate, user=Depends(get_current_user)):
+    require_admin(user)
+    existing = await db.brands.find_one({"id": brand_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Brand not found")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if "name" in updates:
+        new_name = updates["name"].strip().upper()
+        dup = await db.brands.find_one({"name": new_name, "id": {"$ne": brand_id}})
+        if dup:
+            raise HTTPException(400, f"Brand {new_name} already exists")
+        updates["name"] = new_name
+        # Keep products/schemes in sync so existing records are preserved
+        if new_name != existing["name"]:
+            await db.products.update_many({"brand": existing["name"]}, {"$set": {"brand": new_name}})
+            await db.schemes.update_many({"brand": existing["name"]}, {"$set": {"brand": new_name}})
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    updates["updated_at"] = now_utc()
+    await db.brands.update_one({"id": brand_id}, {"$set": updates})
+    return await db.brands.find_one({"id": brand_id}, {"_id": 0})
+
+
+# ----- Territories -----
+@api_router.get("/admin/territories")
+async def admin_territories(user=Depends(get_current_user)):
+    require_admin(user)
+    docs = await db.territories.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+    for t in docs:
+        t["salesperson_count"] = await db.users.count_documents({"territory": t["name"], "role": "salesperson"})
+        t["retailer_count"] = await db.retailers.count_documents({"territory": t["name"]})
+    return docs
+
+
+@api_router.post("/admin/territories")
+async def admin_create_territory(req: TerritoryUpsert, user=Depends(get_current_user)):
+    require_admin(user)
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "Territory name is required")
+    if await db.territories.find_one({"name": name}):
+        raise HTTPException(400, f"Territory {name} already exists")
+    doc = {"id": str(uuid.uuid4()), "name": name, "district": req.district, "active": req.active,
+           "created_at": now_utc(), "updated_at": now_utc()}
+    await db.territories.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/admin/territories/{territory_id}")
+async def admin_update_territory(territory_id: str, req: TerritoryUpdate, user=Depends(get_current_user)):
+    require_admin(user)
+    existing = await db.territories.find_one({"id": territory_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Territory not found")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if "name" in updates:
+        new_name = updates["name"].strip()
+        dup = await db.territories.find_one({"name": new_name, "id": {"$ne": territory_id}})
+        if dup:
+            raise HTTPException(400, f"Territory {new_name} already exists")
+        updates["name"] = new_name
+        if new_name != existing["name"]:
+            await db.users.update_many({"territory": existing["name"]}, {"$set": {"territory": new_name}})
+            await db.retailers.update_many({"territory": existing["name"]}, {"$set": {"territory": new_name}})
+            await db.beats.update_many({"territory": existing["name"]}, {"$set": {"territory": new_name}})
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    updates["updated_at"] = now_utc()
+    await db.territories.update_one({"id": territory_id}, {"$set": updates})
+    return await db.territories.find_one({"id": territory_id}, {"_id": 0})
+
+
+# ----- Retailers (admin edit) -----
+@api_router.put("/admin/retailers/{retailer_id}")
+async def admin_update_retailer(retailer_id: str, req: RetailerAdminUpdate, user=Depends(get_current_user)):
+    require_admin(user)
+    existing = await db.retailers.find_one({"id": retailer_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Retailer not found")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if "status" in updates and updates["status"] not in ("Active", "Inactive"):
+        raise HTTPException(400, "Status must be Active or Inactive")
+    if "mobile" in updates and updates["mobile"] != existing.get("mobile"):
+        dup = await db.retailers.find_one({"mobile": updates["mobile"], "id": {"$ne": retailer_id}})
+        if dup:
+            raise HTTPException(400, f"Mobile already used by {dup['shop_name']}")
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    updates["updated_at"] = now_utc()
+    await db.retailers.update_one({"id": retailer_id}, {"$set": updates})
+    return await db.retailers.find_one({"id": retailer_id}, {"_id": 0})
+
+
+# ----- Beats -----
+@api_router.get("/admin/beats")
+async def admin_beats(user=Depends(get_current_user)):
+    require_admin(user)
+    docs = await db.beats.find({}, {"_id": 0}).to_list(1000)
+    sp_ids = list({d.get("salesperson_id") for d in docs})
+    sps = await db.users.find({"id": {"$in": sp_ids}}, {"_id": 0, "id": 1, "name": 1, "employee_id": 1}).to_list(500)
+    smap = {s["id"]: s for s in sps}
+    day_order = {d: i for i, d in enumerate(WEEKDAYS)}
+    for d in docs:
+        sp = smap.get(d.get("salesperson_id"), {})
+        d["salesperson_name"] = sp.get("name", "")
+        d["employee_id"] = sp.get("employee_id", "")
+        d["retailer_count"] = len(d.get("retailer_ids", []))
+    docs.sort(key=lambda x: (x.get("employee_id", ""), day_order.get(x.get("day", ""), 9)))
+    return docs
+
+
+@api_router.post("/admin/beats")
+async def admin_create_beat(req: BeatUpsert, user=Depends(get_current_user)):
+    require_admin(user)
+    if req.day not in WEEKDAYS:
+        raise HTTPException(400, "Invalid day")
+    sp = await db.users.find_one({"id": req.salesperson_id, "role": "salesperson"})
+    if not sp:
+        raise HTTPException(404, "Salesperson not found")
+    dup = await db.beats.find_one({"salesperson_id": req.salesperson_id, "day": req.day})
+    if dup:
+        raise HTTPException(400, f"{sp['name']} already has a {req.day} beat — edit it instead")
+    doc = {"id": str(uuid.uuid4()), **req.dict(), "created_at": now_utc(), "updated_at": now_utc()}
+    await db.beats.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/admin/beats/{beat_id}")
+async def admin_update_beat(beat_id: str, req: BeatUpdate, user=Depends(get_current_user)):
+    require_admin(user)
+    existing = await db.beats.find_one({"id": beat_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Beat not found")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if "day" in updates and updates["day"] not in WEEKDAYS:
+        raise HTTPException(400, "Invalid day")
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    sp_id = updates.get("salesperson_id", existing["salesperson_id"])
+    day = updates.get("day", existing["day"])
+    dup = await db.beats.find_one({"salesperson_id": sp_id, "day": day, "id": {"$ne": beat_id}})
+    if dup:
+        raise HTTPException(400, "That salesperson already has a beat on that day")
+    updates["updated_at"] = now_utc()
+    await db.beats.update_one({"id": beat_id}, {"$set": updates})
+    return await db.beats.find_one({"id": beat_id}, {"_id": 0})
+
+
+# ----- Schemes -----
+@api_router.get("/admin/schemes")
+async def admin_schemes(user=Depends(get_current_user)):
+    require_admin(user)
+    docs = await db.schemes.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    for d in docs:
+        sd, ed = _as_dt(d.get("start_date")), _as_dt(d.get("end_date"))
+        d["start_date"] = sd.strftime("%Y-%m-%d") if sd else None
+        d["end_date"] = ed.strftime("%Y-%m-%d") if ed else None
+    return docs
+
+
+def _validate_scheme_slabs(slabs):
+    if not slabs:
+        raise HTTPException(400, "At least one slab is required")
+    for s in slabs:
+        if s.min_qty <= 0:
+            raise HTTPException(400, "Slab minimum quantity must be positive")
+        if not s.article.strip():
+            raise HTTPException(400, "Slab gift article is required")
+
+
+@api_router.post("/admin/schemes")
+async def admin_create_scheme(req: SchemeUpsert, user=Depends(get_current_user)):
+    require_admin(user)
+    _validate_scheme_slabs(req.slabs)
+    sd = _parse_date_str(req.start_date)
+    ed = _parse_date_str(req.end_date)
+    if sd and ed and ed < sd:
+        raise HTTPException(400, "End date must be after start date")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": req.name.strip(),
+        "brand": req.brand.strip().upper(),
+        "slabs": [s.dict() for s in req.slabs],
+        "start_date": sd,
+        "end_date": ed,
+        "territory": req.territory or None,
+        "distributor_id": req.distributor_id or None,
+        "active": req.active,
+        "created_at": now_utc(),
+        "updated_at": now_utc(),
+    }
+    await db.schemes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/admin/schemes/{scheme_id}")
+async def admin_update_scheme(scheme_id: str, req: SchemeUpdate, user=Depends(get_current_user)):
+    require_admin(user)
+    existing = await db.schemes.find_one({"id": scheme_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Scheme not found")
+    updates: dict = {}
+    body = req.dict(exclude_unset=True)
+    for k, v in body.items():
+        if k in ("start_date", "end_date"):
+            updates[k] = _parse_date_str(v)
+        elif k == "slabs" and v is not None:
+            _validate_scheme_slabs(req.slabs)
+            updates[k] = [s.dict() for s in req.slabs]
+        elif k == "brand" and v:
+            updates[k] = v.strip().upper()
+        elif v is not None or k in ("territory", "distributor_id"):
+            updates[k] = v
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    updates["updated_at"] = now_utc()
+    await db.schemes.update_one({"id": scheme_id}, {"$set": updates})
+    doc = await db.schemes.find_one({"id": scheme_id}, {"_id": 0})
+    sd, ed = _as_dt(doc.get("start_date")), _as_dt(doc.get("end_date"))
+    doc["start_date"] = sd.strftime("%Y-%m-%d") if sd else None
+    doc["end_date"] = ed.strftime("%Y-%m-%d") if ed else None
+    return doc
+
+
+# ----- Settings -----
+DEFAULT_SETTINGS = {
+    "id": "app",
+    "company": {"name": "FieldForce Pro", "address": "", "gstin": "", "phone": "", "email": ""},
+    "product_categories": ["Detergent Powder", "Detergent Cake", "Dishwash Bar", "Dishwash Liquid", "Toilet Cleaner", "Floor Cleaner"],
+    "no_order_reasons": ["Stock Available", "Shop Closed", "Owner Not Present", "Payment Pending", "Price Issue", "Other"],
+    "complaint_types": ["Damaged Product", "Scheme Not Received", "Billing Issue", "Delivery Delay", "Quality Issue", "Other"],
+    "expense_categories": ["Travel", "Fuel", "Food", "Lodging", "Other"],
+}
+
+
+@api_router.get("/settings")
+async def get_settings(user=Depends(get_current_user)):
+    doc = await db.settings.find_one({"id": "app"}, {"_id": 0})
+    return doc or DEFAULT_SETTINGS
+
+
+@api_router.put("/admin/settings")
+async def update_settings(req: SettingsUpdate, user=Depends(get_current_user)):
+    require_admin(user)
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    for key in ("product_categories", "no_order_reasons", "complaint_types", "expense_categories"):
+        if key in updates:
+            cleaned = [s.strip() for s in updates[key] if s and s.strip()]
+            if not cleaned:
+                raise HTTPException(400, f"{key.replace('_', ' ').title()} cannot be empty")
+            updates[key] = cleaned
+    if not updates:
+        raise HTTPException(400, "Nothing to update")
+    updates["updated_at"] = now_utc()
+    await db.settings.update_one({"id": "app"}, {"$set": updates}, upsert=True)
+    return await db.settings.find_one({"id": "app"}, {"_id": 0})
+
+
+# ----- Master data migration (idempotent — preserves all existing records) -----
+async def migrate_master_data():
+    # Brands collection seeded from existing product brands
+    for b in await db.products.distinct("brand"):
+        if b and not await db.brands.find_one({"name": b}):
+            await db.brands.insert_one({"id": str(uuid.uuid4()), "name": b, "logo": None, "active": True,
+                                        "created_at": now_utc(), "updated_at": now_utc()})
+    # Territories seeded from existing user/beat territory strings
+    names = set(await db.users.distinct("territory")) | set(await db.beats.distinct("territory"))
+    for t in names:
+        if t and not await db.territories.find_one({"name": t}):
+            await db.territories.insert_one({"id": str(uuid.uuid4()), "name": t, "district": "Kolhapur", "active": True,
+                                             "created_at": now_utc(), "updated_at": now_utc()})
+    # Settings defaults
+    if not await db.settings.find_one({"id": "app"}):
+        await db.settings.insert_one({**DEFAULT_SETTINGS, "updated_at": now_utc()})
+
+
 @api_router.get("/")
 async def root():
     return {"message": "FMCG FieldForce Pro API"}
@@ -1614,6 +2118,11 @@ async def on_startup():
             logger.info("Seed complete.")
     except Exception as e:
         logger.error(f"Startup seed failed: {e}")
+    # Master data migration (idempotent)
+    try:
+        await migrate_master_data()
+    except Exception as e:
+        logger.error(f"Master data migration failed: {e}")
     # Init storage lazily; ignore errors so app can boot without storage
     try:
         await run_in_threadpool(init_storage)

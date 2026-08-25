@@ -56,15 +56,17 @@ class TestAdminTargets:
         r = requests.get(f"{BASE_URL}/api/admin/targets", headers=_h(admin_token), timeout=TIMEOUT)
         assert r.status_code == 200
         data = r.json()
-        assert isinstance(data, list) and len(data) >= 3
-        for row in data:
+        assert isinstance(data, dict)
+        assert set(data.keys()) >= {"salespersons", "distributors", "territories"}
+        assert len(data["salespersons"]) >= 3
+        for row in data["salespersons"]:
             assert "id" in row and "daily_target" in row and "monthly_target" in row
             assert "employee_id" in row and "name" in row
 
     def test_upsert_target_and_reflect(self, admin_token):
         # Pick EMP005 (per instructions) to avoid disrupting EMP003 performance data
         r = requests.get(f"{BASE_URL}/api/admin/targets", headers=_h(admin_token), timeout=TIMEOUT)
-        rows = r.json()
+        rows = r.json()["salespersons"]
         emp005 = next((x for x in rows if x["employee_id"] == "EMP005"), None)
         assert emp005 is not None
         sp_id = emp005["id"]
@@ -86,7 +88,7 @@ class TestAdminTargets:
 
         # Verify GET reflects new values
         r2 = requests.get(f"{BASE_URL}/api/admin/targets", headers=_h(admin_token), timeout=TIMEOUT)
-        rows2 = r2.json()
+        rows2 = r2.json()["salespersons"]
         emp005_new = next((x for x in rows2 if x["employee_id"] == "EMP005"), None)
         assert emp005_new["daily_target"] == 15000
         assert emp005_new["monthly_target"] == 300000
@@ -99,12 +101,12 @@ class TestAdminTargets:
         )
         assert p3.status_code == 200
         r3 = requests.get(f"{BASE_URL}/api/admin/targets", headers=_h(admin_token), timeout=TIMEOUT)
-        emp005_v3 = next((x for x in r3.json() if x["employee_id"] == "EMP005"), None)
+        emp005_v3 = next((x for x in r3.json()["salespersons"] if x["employee_id"] == "EMP005"), None)
         assert emp005_v3["daily_target"] == 18000
 
     def test_invalid_period(self, admin_token):
         r = requests.get(f"{BASE_URL}/api/admin/targets", headers=_h(admin_token), timeout=TIMEOUT)
-        sp_id = r.json()[0]["id"]
+        sp_id = r.json()["salespersons"][0]["id"]
         p = requests.post(
             f"{BASE_URL}/api/admin/targets", headers=_h(admin_token),
             json={"salesperson_id": sp_id, "period": "weekly", "value": 100},
@@ -114,7 +116,7 @@ class TestAdminTargets:
 
     def test_negative_value(self, admin_token):
         r = requests.get(f"{BASE_URL}/api/admin/targets", headers=_h(admin_token), timeout=TIMEOUT)
-        sp_id = r.json()[0]["id"]
+        sp_id = r.json()["salespersons"][0]["id"]
         p = requests.post(
             f"{BASE_URL}/api/admin/targets", headers=_h(admin_token),
             json={"salesperson_id": sp_id, "period": "daily", "value": -50},

@@ -9,12 +9,18 @@ import { theme } from '@/src/theme';
 const NAV = [
   { label: 'Dashboard', icon: 'view-dashboard-outline' as const, route: '/admin' },
   { label: 'Orders', icon: 'clipboard-list-outline' as const, route: '/admin/orders' },
+  { label: 'Retailers', icon: 'store-outline' as const, route: '/admin/retailers' },
   { label: 'Products', icon: 'package-variant-closed' as const, route: '/admin/products' },
-  { label: 'Users', icon: 'account-group-outline' as const, route: '/admin/users' },
+  { label: 'Brands', icon: 'tag-multiple-outline' as const, route: '/admin/brands' },
+  { label: 'Schemes', icon: 'gift-outline' as const, route: '/admin/schemes' },
+  { label: 'Beats', icon: 'map-marker-path' as const, route: '/admin/beats' },
   { label: 'Targets', icon: 'target' as const, route: '/admin/targets' },
+  { label: 'Users', icon: 'account-group-outline' as const, route: '/admin/users' },
+  { label: 'Territories', icon: 'map-outline' as const, route: '/admin/territories' },
   { label: 'Attendance', icon: 'calendar-check-outline' as const, route: '/admin/attendance' },
   { label: 'Expenses', icon: 'wallet-outline' as const, route: '/admin/expenses' },
   { label: 'Complaints', icon: 'alert-circle-outline' as const, route: '/admin/complaints' },
+  { label: 'Settings', icon: 'cog-outline' as const, route: '/admin/settings' },
 ];
 
 export default function AdminLayout() {

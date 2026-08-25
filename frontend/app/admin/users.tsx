@@ -6,10 +6,11 @@ import { theme } from '@/src/theme';
 import { Card, TRow, Th, Td, StatusChip, AdminModal, Field, SelectChips, PrimaryBtn, GhostBtn } from '@/src/adminUi';
 
 const ROLES = ['salesperson', 'sales_manager', 'distributor', 'super_admin'];
-const EMPTY_FORM = { employee_id: '', name: '', role: 'salesperson', mobile: '', territory: '', password: '' };
+const EMPTY_FORM = { employee_id: '', name: '', role: 'salesperson', mobile: '', territory: '', manager_id: '', assigned_salesperson_ids: [] as string[], password: '' };
 
 export default function AdminUsers() {
   const [users, setUsers] = useState<any[]>([]);
+  const [territories, setTerritories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
@@ -18,8 +19,9 @@ export default function AdminUsers() {
 
   const load = useCallback(async () => {
     try {
-      const d = await api.adminUsers();
+      const [d, t] = await Promise.all([api.adminUsers(), api.adminTerritories()]);
       setUsers(d || []);
+      setTerritories((t || []).filter((x: any) => x.active));
     } catch {} finally {
       setLoading(false);
     }
@@ -40,7 +42,11 @@ export default function AdminUsers() {
 
   const openEdit = (u: any) => {
     setEditing(u);
-    setForm({ employee_id: u.employee_id, name: u.name, role: u.role, mobile: u.mobile || '', territory: u.territory || '', password: '' });
+    setForm({
+      employee_id: u.employee_id, name: u.name, role: u.role, mobile: u.mobile || '',
+      territory: u.territory || '', manager_id: u.manager_id || '',
+      assigned_salesperson_ids: u.assigned_salesperson_ids || [], password: '',
+    });
     setModal(true);
   };
 
@@ -52,21 +58,24 @@ export default function AdminUsers() {
     }
     setBusy(true);
     try {
+      const common: any = {
+        name: form.name.trim(), role: form.role, mobile: form.mobile.trim(), territory: form.territory.trim(),
+      };
+      if (form.role === 'salesperson' && form.manager_id) common.manager_id = form.manager_id;
+      if (form.role === 'distributor') common.assigned_salesperson_ids = form.assigned_salesperson_ids;
       if (editing) {
-        const payload: any = { name: form.name.trim(), role: form.role, mobile: form.mobile.trim(), territory: form.territory.trim() };
+        const payload: any = { ...common };
         if (form.password) payload.password = form.password;
         await api.adminUpdateUser(editing.id, payload);
       } else {
         await api.adminCreateUser({
+          ...common,
           employee_id: form.employee_id.trim().toUpperCase(),
-          name: form.name.trim(),
-          role: form.role,
-          mobile: form.mobile.trim(),
-          territory: form.territory.trim(),
           password: form.password,
         });
       }
       setModal(false);
+      notify('Success', editing ? 'User updated' : 'User created');
       load();
     } catch (e: any) {
       notify('Error', e.message);
@@ -136,8 +145,50 @@ export default function AdminUsers() {
         <SelectChips label="Role" options={ROLES} value={form.role} onChange={set('role')} />
         <View style={styles.formRow}>
           <View style={{ flex: 1 }}><Field testID="user-mobile" label="Mobile" value={form.mobile} onChangeText={set('mobile')} keyboardType="phone-pad" placeholder="9800000000" /></View>
-          <View style={{ flex: 1 }}><Field testID="user-territory" label="Territory" value={form.territory} onChangeText={set('territory')} placeholder="Kolhapur City" /></View>
         </View>
+        <SelectChips label="Territory" options={territories.map((t) => t.name)} value={form.territory} onChange={set('territory')} />
+        {form.role === 'salesperson' ? (
+          <>
+            <Text style={styles.selLabel}>Reporting Manager</Text>
+            <View style={styles.selWrap}>
+              {users.filter((u) => u.role === 'sales_manager').map((m) => (
+                <Pressable
+                  key={m.id}
+                  testID={`user-manager-${m.employee_id}`}
+                  style={[styles.selChip, form.manager_id === m.id && styles.selChipActive]}
+                  onPress={() => setForm((f: any) => ({ ...f, manager_id: f.manager_id === m.id ? '' : m.id }))}
+                >
+                  <Text style={[styles.selText, form.manager_id === m.id && { color: '#fff' }]}>{m.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        ) : null}
+        {form.role === 'distributor' ? (
+          <>
+            <Text style={styles.selLabel}>Assigned Salespersons</Text>
+            <View style={styles.selWrap}>
+              {users.filter((u) => u.role === 'salesperson').map((s) => {
+                const sel = form.assigned_salesperson_ids.includes(s.id);
+                return (
+                  <Pressable
+                    key={s.id}
+                    testID={`user-assign-${s.employee_id}`}
+                    style={[styles.selChip, sel && styles.selChipActive]}
+                    onPress={() => setForm((f: any) => ({
+                      ...f,
+                      assigned_salesperson_ids: sel
+                        ? f.assigned_salesperson_ids.filter((x: string) => x !== s.id)
+                        : [...f.assigned_salesperson_ids, s.id],
+                    }))}
+                  >
+                    <Text style={[styles.selText, sel && { color: '#fff' }]}>{s.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
         <Field
           testID="user-password"
           label={editing ? 'New Password (leave blank to keep current)' : 'Password *'}
@@ -163,5 +214,10 @@ const styles = StyleSheet.create({
   pageSub: { fontSize: 13, color: theme.colors.muted, marginTop: 2 },
   iconAction: { width: 30, height: 30, borderRadius: 8, backgroundColor: theme.colors.surfaceTertiary, alignItems: 'center', justifyContent: 'center' },
   formRow: { flexDirection: 'row', gap: 12 },
+  selLabel: { fontSize: 12, fontWeight: '700', color: theme.colors.muted, marginBottom: 6 },
+  selWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
+  selChip: { paddingHorizontal: 12, height: 32, justifyContent: 'center', borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: '#fff' },
+  selChipActive: { backgroundColor: theme.colors.brand, borderColor: theme.colors.brand },
+  selText: { fontSize: 12, fontWeight: '600', color: theme.colors.onSurface },
   modalBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 6 },
 });

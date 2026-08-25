@@ -8,7 +8,7 @@ import { theme } from '@/src/theme';
 import { takePhoto, pickFromGallery } from '@/src/photoPicker';
 import { uploadImage } from '@/src/upload';
 
-const CATEGORIES = ['Damaged Product', 'Scheme Not Received', 'Billing Issue', 'Delivery Delay', 'Quality Issue', 'Other'];
+const DEFAULT_CATEGORIES = ['Damaged Product', 'Scheme Not Received', 'Billing Issue', 'Delivery Delay', 'Quality Issue', 'Other'];
 
 export default function NewComplaint() {
   const { retailer_id } = useLocalSearchParams<{ retailer_id?: string }>();
@@ -17,10 +17,20 @@ export default function NewComplaint() {
   const [retailers, setRetailers] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
   const [search, setSearch] = useState('');
-  const [category, setCategory] = useState(CATEGORIES[0]);
+  const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
+  const [category, setCategory] = useState(DEFAULT_CATEGORIES[0]);
   const [description, setDescription] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.settings().then((s: any) => {
+      if (s?.complaint_types?.length) {
+        setCategories(s.complaint_types);
+        setCategory((c) => (s.complaint_types.includes(c) ? c : s.complaint_types[0]));
+      }
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -98,7 +108,7 @@ export default function NewComplaint() {
 
         <Text style={styles.label}>Category</Text>
         <View style={styles.chips}>
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <Pressable key={c} testID={`complaint-cat-${c}`} style={[styles.chip, category === c && styles.chipActive]} onPress={() => setCategory(c)}>
               <Text style={[styles.chipText, category === c && styles.chipTextActive]}>{c}</Text>
             </Pressable>
